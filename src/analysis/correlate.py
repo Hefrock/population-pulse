@@ -111,7 +111,13 @@ def lagged_cross_correlation(
         if lag == 0:
             corrs.append(float(d.corr(r)))
         else:
-            corrs.append(float(d.iloc[:-lag].corr(r.iloc[lag:])))
+            # Strip index before correlating: pandas .corr() aligns by index,
+            # so d.iloc[:-lag] and r.iloc[lag:] (different index ranges) would
+            # intersect and compare the same timestamps rather than the intended
+            # positional shift. Using .values avoids this.
+            corrs.append(float(
+                pd.Series(d.values[:-lag]).corr(pd.Series(r.values[lag:]))
+            ))
 
     corrs_clean = [c if not np.isnan(c) else 0.0 for c in corrs]
     best_idx = int(np.argmax(np.abs(corrs_clean)))

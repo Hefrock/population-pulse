@@ -89,7 +89,13 @@ def _date_to_epiweek(d: datetime.date) -> int:
 
 
 def _epiweek_to_timestamp(epiweek: int, timezone: str) -> pd.Timestamp:
-    """Convert YYYYWW epiweek to a timezone-aware Sunday timestamp."""
+    """Convert YYYYWW epiweek to a timezone-aware Sunday timestamp.
+
+    Uses ISO week as an approximation of MMWR week. They share the same week-1
+    anchor (week containing Jan 4) but differ in start day (ISO=Monday,
+    MMWR=Sunday). For weekly correlation this is a ≤1-day offset, which is
+    acceptable at weekly resolution.
+    """
     year, week = divmod(epiweek, 100)
     dt = datetime.datetime.strptime(f"{year}-W{week:02d}-0", "%G-W%V-%w")
     return pd.Timestamp(dt).tz_localize(

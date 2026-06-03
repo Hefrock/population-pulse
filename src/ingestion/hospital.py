@@ -44,7 +44,12 @@ def fetch_ma_dph_respiratory(
         return ili_df
 
     # Tier 3: synthetic sample — offline / CI testing only
-    print("[hospital] Using SAMPLE hospital-demand data (not real DPH data).")
+    print(
+        "\n⚠️  WARNING: [hospital] Falling back to SYNTHETIC sample data.\n"
+        "   Correlations computed with this data are not meaningful.\n"
+        "   To use real data, either download the MA DPH file or ensure\n"
+        "   CDC FluView (Delphi Epidata API) is reachable.\n"
+    )
     if not SAMPLE_PATH.exists():
         raise FileNotFoundError(
             "No hospital-demand data found. Run `python -m src.ingestion.make_samples` "

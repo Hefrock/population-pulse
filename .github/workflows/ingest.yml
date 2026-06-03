@@ -8,15 +8,34 @@ on:
   workflow_dispatch:
     inputs:
       start:
-        description: 'Start date (ISO, e.g. 2025-01-01). Defaults to 90 days ago.'
+        description: 'Start date (ISO, e.g. 2025-01-01). Defaults to 365 days ago.'
         required: false
       end:
         description: 'End date (ISO, e.g. 2025-03-31). Defaults to today.'
         required: false
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest tests/ -v
+
   ingest:
     runs-on: ubuntu-latest
+    needs: test  # only ingest if tests pass
 
     steps:
       - name: Checkout
@@ -51,5 +70,4 @@ jobs:
         with:
           name: boston-data-${{ github.run_id }}
           path: data/boston/
-          # Keep 30 days of runs so you can compare snapshots over time
           retention-days: 30
