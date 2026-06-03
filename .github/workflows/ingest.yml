@@ -4,7 +4,6 @@ on:
   schedule:
     # 6 AM UTC = 2 AM ET — runs after midnight, before business hours
     - cron: '0 6 * * *'
-  # Also allow manual trigger from the Actions tab for testing
   workflow_dispatch:
     inputs:
       start:
@@ -18,37 +17,37 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
+        name: Install dependencies
 
-      - name: Run tests
-        run: pytest tests/ -v
+      - run: pytest tests/ -v
+        name: Run tests
 
   ingest:
     runs-on: ubuntu-latest
-    needs: test  # only ingest if tests pass
+    needs: test
+    permissions:
+      contents: write   # needed to push to the data branch
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so we can checkout/create the data branch
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
+        name: Install dependencies
 
       - name: Run ingestion pipeline
         env:
@@ -65,9 +64,34 @@ jobs:
             python -m src.ingestion.run --city boston
           fi
 
-      - name: Upload data artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: boston-data-${{ github.run_id }}
-          path: data/boston/
-          retention-days: 30
+      - name: Push Parquet files to data branch
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Snapshot generated files before switching branches
+          SNAP=/tmp/parquet-snapshot
+          mkdir -p "$SNAP"
+          cp data/boston/*.parquet "$SNAP/" 2>/dev/null \
+            || { echo "No Parquet files generated — skipping data branch push"; exit 0; }
+
+          # Switch to (or create) the data branch
+          if git ls-remote --exit-code --heads origin data; then
+            git checkout data
+          else
+            git checkout --orphan data
+            git rm -rf . --quiet 2>/dev/null || true
+          fi
+
+          # Copy fresh data and commit
+          mkdir -p data/boston
+          cp "$SNAP"/*.parquet data/boston/
+
+          # -f overrides .gitignore which excludes *.parquet on the main branch
+          git add -f data/boston/
+          if git diff --staged --quiet; then
+            echo "Data unchanged — nothing to push"
+          else
+            git commit -m "chore: update ingested data $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+            git push origin data
+          fi

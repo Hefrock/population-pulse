@@ -1,57 +1,89 @@
 """population-pulse dashboard.
 
-A pure-Python Streamlit app that ties the pipeline together visually:
+Reads pre-ingested Parquet files — no API keys required.
 
-  - pick a city and date range
-  - see each signal on a shared timeline
-  - run a lagged cross-correlation between a chosen driver and hospital demand
+Data source priority:
+  1. Local data/boston/*.parquet  (local development after running the pipeline)
+  2. GitHub data branch           (Streamlit Cloud — fetched automatically)
+  3. Local sample data            (offline / first-time dev setup)
 
-Run with:
+Run locally:
     streamlit run src/dashboard/app.py
-
-In Phase 1 this runs on sample data out of the box. Once you've ingested real
-data (python -m src.ingestion.run), it'll pick up the Parquet files under
-data/<city>/.
 """
 
 from __future__ import annotations
 
-import os
+import io
 from pathlib import Path
 
 import pandas as pd
+import requests
 import streamlit as st
 
-# Bridge Streamlit Cloud secrets → os.environ so all fetchers work unchanged.
-# On local runs this is a no-op when no secrets.toml is present.
-try:
-    for _k in ["MBTA_API_KEY", "TICKETMASTER_API_KEY", "EVENTBRITE_API_KEY"]:
-        if _k in st.secrets and _k not in os.environ:
-            os.environ[_k] = st.secrets[_k]
-except Exception:
-    pass
-
 from src.analysis.correlate import align, lagged_cross_correlation
-from src.providers import load_provider
+
+# Base URL for the data branch — override via POPULATION_PULSE_DATA_URL env var
+# if you fork the repo.
+import os
+DATA_BRANCH_BASE = os.environ.get(
+    "POPULATION_PULSE_DATA_URL",
+    "https://raw.githubusercontent.com/hefrock/population-pulse/data",
+)
+
+SIGNALS = ["transit", "weather", "events", "hospital_demand"]
 
 st.set_page_config(page_title="population-pulse", layout="wide")
 
 
-@st.cache_data
-def _load_signals(city: str, start: str, end: str) -> dict[str, pd.DataFrame]:
-    """Load from ingested Parquet if present, else fetch via the provider."""
+@st.cache_data(ttl=3600)
+def _load_signals(city: str) -> dict[str, pd.DataFrame]:
+    """Load signals: local files → data branch → sample data."""
     data_dir = Path("data") / city
-    names = ["transit", "weather", "events", "hospital_demand"]
-    if all((data_dir / f"{n}.parquet").exists() for n in names):
-        return {n: pd.read_parquet(data_dir / f"{n}.parquet") for n in names}
 
-    provider = load_provider(city)
-    return {
-        "transit": provider.fetch_transit(start, end),
-        "weather": provider.fetch_weather(start, end),
-        "events": provider.fetch_events(start, end),
-        "hospital_demand": provider.fetch_hospital_demand(start, end),
-    }
+    # 1. Local Parquet files (present after running the ingestion pipeline)
+    if all((data_dir / f"{s}.parquet").exists() for s in SIGNALS):
+        return {s: pd.read_parquet(data_dir / f"{s}.parquet") for s in SIGNALS}
+
+    # 2. GitHub data branch (used in Streamlit Cloud — no keys needed)
+    result: dict[str, pd.DataFrame] = {}
+    missing = []
+    for signal in SIGNALS:
+        url = f"{DATA_BRANCH_BASE}/data/{city}/{signal}.parquet"
+        try:
+            resp = requests.get(url, timeout=20)
+            resp.raise_for_status()
+            result[signal] = pd.read_parquet(io.BytesIO(resp.content))
+        except Exception:
+            missing.append(signal)
+            result[signal] = pd.DataFrame()
+
+    if not missing:
+        return result
+
+    # 3. Local sample data (offline / CI)
+    sample_dir = Path("data") / "samples"
+    if sample_dir.exists():
+        from src.ingestion.make_samples import main as make_samples
+        make_samples()
+        if all((data_dir / f"{s}.parquet").exists() for s in SIGNALS):
+            return {s: pd.read_parquet(data_dir / f"{s}.parquet") for s in SIGNALS}
+
+    return result
+
+
+def _filter_by_date(
+    signals: dict[str, pd.DataFrame],
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> dict[str, pd.DataFrame]:
+    out = {}
+    for name, df in signals.items():
+        if df.empty or "timestamp" not in df.columns:
+            out[name] = df
+            continue
+        ts = pd.to_datetime(df["timestamp"], utc=True)
+        out[name] = df[ts.between(start, end)].copy()
+    return out
 
 
 def main() -> None:
@@ -63,19 +95,39 @@ def main() -> None:
 
     with st.sidebar:
         city = st.selectbox("City", ["boston"], index=0)
-        start = st.text_input("Start date", "2024-06-01")
-        end = st.text_input("End date", "2025-05-31")
+        st.markdown("**Date range**")
+        default_end = pd.Timestamp.now(tz="UTC").normalize()
+        default_start = default_end - pd.Timedelta(days=365)
+        start_date = st.date_input("From", value=default_start.date())
+        end_date = st.date_input("To", value=default_end.date())
         st.markdown("---")
-        st.markdown(
-            "Running on **sample data** unless you've ingested real data. "
-            "See `docs/01-getting-started.md`."
+        st.caption(
+            "Data refreshes daily via GitHub Actions. "
+            "No API keys are needed to view this dashboard."
         )
 
-    try:
-        signals = _load_signals(city, start, end)
-    except Exception as exc:  # noqa: BLE001
-        st.error(f"Could not load data: {exc}")
-        st.info("Try: `python -m src.ingestion.make_samples` then reload.")
+    with st.spinner("Loading data…"):
+        try:
+            raw_signals = _load_signals(city)
+        except Exception as exc:
+            st.error(f"Could not load data: {exc}")
+            st.info(
+                "For local development run: "
+                "`python -m src.ingestion.make_samples`"
+            )
+            return
+
+    start_ts = pd.Timestamp(start_date, tz="UTC")
+    end_ts = pd.Timestamp(end_date, tz="UTC")
+    signals = _filter_by_date(raw_signals, start_ts, end_ts)
+
+    all_empty = all(v.empty for v in signals.values())
+    if all_empty:
+        st.warning(
+            "No data available yet. "
+            "The GitHub Actions pipeline runs daily — check back after the first run, "
+            "or run `python -m src.ingestion.run --city boston` locally."
+        )
         return
 
     # --- Aligned timeline ----------------------------------------------------
@@ -86,7 +138,7 @@ def main() -> None:
     }
     aligned = align(numeric_signals, resolution="W")
     if aligned.empty:
-        st.warning("No numeric signals to display yet.")
+        st.warning("No numeric signals to display for this date range.")
         return
     st.line_chart(aligned)
 
@@ -123,8 +175,8 @@ def main() -> None:
             delta=f"at lag {result.best_lag} weeks",
         )
         st.caption(
-            "Reminder: correlation here is suggestive, not causal. Confirm with "
-            "the matched-baseline event studies planned for Phase 2."
+            "Reminder: correlation here is suggestive, not causal. "
+            "Confirm with matched-baseline event studies planned for Phase 2."
         )
     except ValueError as exc:
         st.warning(str(exc))
