@@ -61,10 +61,11 @@ def fetch_events(
             timeout=REQUEST_TIMEOUT,
         )
 
-        if resp.status_code in (401, 403):
+        if resp.status_code in (401, 403, 404):
             print(
-                "[eventbrite] Access denied — your token may need public-search "
-                "approval. Skipping Eventbrite; other event sources still active."
+                f"[eventbrite] HTTP {resp.status_code} — the public events search "
+                "endpoint may be deprecated or your token needs approval. "
+                "Skipping Eventbrite; Ticketmaster and manual CSV still active."
             )
             return _empty_frame()
 
