@@ -74,16 +74,18 @@ events:
     base_url: https://app.ticketmaster.com/discovery/v2
     city: Boston
     state_code: MA
-    # Sports and Music drive the largest single-day crowd spikes.
+    # classificationName accepts comma-separated values; both Sports and Music
+    # are fetched in a single query. The fetcher always queries forward
+    # (today → today+365) since the Discovery API only exposes upcoming events.
     segments:
       - Sports
       - Music
 
-  eventbrite:
-    base_url: https://www.eventbriteapi.com/v3
-    # Civic events (marathons, festivals, parades) missing from Ticketmaster.
-    location: "Boston, MA, USA"
-    radius: 25mi
+  civic_events:
+    # Boston.gov publishes its event calendar through a Drupal JSON:API endpoint.
+    # No API key required. Covers civic gatherings Ticketmaster misses:
+    # marathons, festivals, parades, community health fairs.
+    base_url: https://www.boston.gov
 
   venues:
     - TD Garden

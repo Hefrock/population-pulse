@@ -17,7 +17,7 @@ This project builds a data pipeline and dashboard to explore that question for B
 1. **Ingests four signals daily** via GitHub Actions:
    - Transit volume (MBTA gated station entries — historical daily ridership)
    - Weather (temperature, apparent temperature, precipitation)
-   - Events (Sports and Music events via Ticketmaster; civic events via Eventbrite)
+   - Events (Sports and Music events via Ticketmaster; civic events via Boston.gov)
    - Hospital demand (CDC FluView ILI patient counts; upgradeable to MA DPH ED data)
 
 2. **Stores data on a `data` branch** — the dashboard reads from there, so the app has no secrets or API calls of its own.
@@ -48,8 +48,8 @@ These are analyzed separately because they'd confound each other in a single cor
 | Transit | MBTA Gated Station Entries (MassDOT open data) | Daily, 2014–present | None |
 | Transit (fallback) | MBTA V3 API | Real-time snapshot | Free — `api-v3.mbta.com` |
 | Weather | Open-Meteo archive | Hourly historical | None |
-| Events | Ticketmaster Discovery API | On-demand | Free — `developer.ticketmaster.com` |
-| Events (civic) | Eventbrite API | On-demand | Free — `eventbrite.com/platform` |
+| Events | Ticketmaster Discovery API | Upcoming, rolling 365 days | Free — `developer.ticketmaster.com` |
+| Events (civic) | Boston.gov public calendar (Drupal JSON:API) | Upcoming, rolling 365 days | None |
 | Hospital demand | CDC FluView via Delphi Epidata | Weekly ILI counts | None |
 | Hospital demand (better) | MA DPH Respiratory Dashboard | Weekly ED visits | Manual download |
 
@@ -86,7 +86,7 @@ GitHub Actions runs the full ingestion daily at 2 AM ET. After each run, the fre
 
 To trigger a manual run: **Actions → Daily Ingestion → Run workflow**.
 
-API keys (MBTA, Ticketmaster, Eventbrite) are stored as GitHub Secrets and never touch the codebase.
+API keys (MBTA, Ticketmaster) are stored as GitHub Secrets and never touch the codebase.
 
 ---
 
@@ -102,7 +102,7 @@ population-pulse/
 │   ├── ingestion/       # source fetchers (mbta, weather, ticketmaster, ...)
 │   ├── analysis/        # timeline alignment + lagged correlation
 │   └── dashboard/       # Streamlit app
-├── tests/               # pytest suite (20 tests)
+├── tests/               # pytest suite (24 tests)
 ├── docs/                # narrated walkthrough
 └── .github/workflows/   # daily ingestion + test gate
 ```
@@ -126,7 +126,7 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 | Ingestion pipeline | Working — MBTA, weather, Ticketmaster, CDC FluView |
 | Daily GitHub Actions | Working |
 | Dashboard | Working — reads from data branch, no secrets needed |
-| Test suite | 20 tests, all passing |
+| Test suite | 24 tests, all passing |
 | Phase 2 event studies | Planned |
 | Second city | Architecture ready |
 

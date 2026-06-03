@@ -111,12 +111,87 @@ def test_eventbrite_no_key_returns_empty(monkeypatch):
     assert df.empty
 
 
+# --- Boston.gov civic events ------------------------------------------------
+
+def test_civic_events_http_error_returns_empty(monkeypatch):
+    """Any HTTP error from Boston.gov returns empty, not an exception."""
+    from src.ingestion import civic_events
+
+    monkeypatch.setattr(
+        civic_events.requests, "get",
+        lambda *a, **k: _FakeResp({"data": [], "links": {}}),
+    )
+    df = civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
+        timezone="America/New_York",
+    )
+    assert df.empty
+
+
+def test_civic_events_parses_drupal_jsonapi(monkeypatch):
+    """A valid Drupal JSON:API payload is parsed into the standard schema."""
+    from src.ingestion import civic_events
+
+    future = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(days=30)).isoformat()
+    payload = {
+        "data": [
+            {
+                "type": "node--event",
+                "attributes": {
+                    "title": "Boston Marathon",
+                    "field_event_date_recur": [{"value": future}],
+                },
+            }
+        ],
+        "links": {},
+    }
+    monkeypatch.setattr(
+        civic_events.requests, "get",
+        lambda *a, **k: _FakeResp(payload),
+    )
+    df = civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
+        timezone="America/New_York",
+    )
+    assert not df.empty
+    assert list(df.columns) == ["timestamp", "venue", "name", "expected_attendance", "source"]
+    assert df["name"].iloc[0] == "Boston Marathon"
+    assert df["source"].iloc[0] == "boston_gov"
+
+
+def test_ticketmaster_uses_classificationname(monkeypatch):
+    """fetch_events sends classificationName (not segmentName) to the API."""
+    import os
+    from src.ingestion import ticketmaster
+
+    monkeypatch.setenv("TICKETMASTER_API_KEY", "testkey")
+    captured = {}
+
+    def fake_get(url, params=None, timeout=None):
+        captured.update(params or {})
+        return _FakeResp({"page": {"totalPages": 1}, "_embedded": {"events": []}})
+
+    monkeypatch.setattr(ticketmaster.requests, "get", fake_get)
+    ticketmaster.fetch_events(
+        base_url="https://app.ticketmaster.com/discovery/v2",
+        city="Boston", state_code="MA",
+        start="2025-01-01", end="2025-03-31",
+        timezone="America/New_York",
+        segments=["Sports", "Music"],
+    )
+    assert "classificationName" in captured
+    assert "segmentName" not in captured
+
+
 # --- MBTA historical gated-entries ------------------------------------------
 
 class _FakeResp:
-    def __init__(self, payload=None, content=None):
+    def __init__(self, payload=None, content=None, status_code=200):
         self._payload = payload
         self.content = content
+        self.status_code = status_code
 
     def raise_for_status(self):
         pass

@@ -1,8 +1,8 @@
 """Boston implementation of :class:`CityDataProvider`.
 
 Delegates to source-specific fetchers in ``src/ingestion``. Events are merged
-from three sources in priority order: Ticketmaster, Eventbrite, manual CSV.
-MBTA automatically uses live mode when MBTA_API_KEY is set.
+from three sources in priority order: Ticketmaster, Boston.gov civic events,
+manual CSV. MBTA automatically uses historical ridership first.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.providers.base import CityDataProvider
-from src.ingestion import mbta, weather, events, hospital, ticketmaster, eventbrite
+from src.ingestion import mbta, weather, events, hospital, ticketmaster, civic_events
 
 
 class BostonProvider(CityDataProvider):
@@ -61,19 +61,17 @@ class BostonProvider(CityDataProvider):
             if not tm_df.empty:
                 frames.append(tm_df)
 
-        # 2. Eventbrite — civic events, marathons, festivals
-        eb_cfg = cfg.get("eventbrite", {})
-        if eb_cfg:
-            eb_df = eventbrite.fetch_events(
-                base_url=eb_cfg["base_url"],
-                location=eb_cfg["location"],
-                radius=eb_cfg["radius"],
+        # 2. Boston.gov civic events — marathons, parades, festivals, public events
+        ce_cfg = cfg.get("civic_events", {})
+        if ce_cfg:
+            ce_df = civic_events.fetch_events(
+                base_url=ce_cfg["base_url"],
                 start=start,
                 end=end,
                 timezone=self.timezone,
             )
-            if not eb_df.empty:
-                frames.append(eb_df)
+            if not ce_df.empty:
+                frames.append(ce_df)
 
         # 3. Manual CSV — hand-curated baseline, always attempted
         csv_cfg = cfg.get("manual_csv", {})
