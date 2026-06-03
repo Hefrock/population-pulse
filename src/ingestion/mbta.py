@@ -28,7 +28,9 @@ MBTA_API_KEY (only needed for the live-snapshot fallback).
 
 from __future__ import annotations
 
+import io
 import os
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -36,8 +38,9 @@ import requests
 
 SAMPLE_PATH = Path("data/samples/mbta_ridership_sample.csv")
 REQUEST_TIMEOUT = 60
-# ArcGIS Online's content endpoint returns the live FeatureServer URL for a
-# published item — stable across portal redesigns, unlike the service URL.
+DOWNLOAD_TIMEOUT = 180  # CSV downloads can be tens of MB
+# ArcGIS Online's content endpoint describes a published item. Feature-service
+# items expose a service ``url``; file items (CSV) expose their bytes at /data.
 ARCGIS_ITEM_API = "https://www.arcgis.com/sharing/rest/content/items/{item_id}"
 ARCGIS_QUERY_PAGE = 2000  # ArcGIS default max records per response
 
@@ -102,20 +105,62 @@ def fetch_gated_entries(
 ) -> pd.DataFrame:
     """Return daily gated-entry totals per line from the MBTA open-data portal.
 
-    Aggregates server-side (sum of entries grouped by day and line) so the
-    response stays small regardless of how many stations/time-periods underlie
-    it. Field names are auto-discovered from the layer metadata unless pinned.
+    The MBTA publishes this as one of two ArcGIS item types, so we handle both:
 
-    Returns ``timestamp`` (daily, tz-aware), ``route`` (line name), ``value``
-    (entry count). Lines are summed downstream in :mod:`src.analysis.correlate`,
-    so per-line rows are fine.
+    * **Feature Service** — query server-side, summing entries grouped by day
+      and line, so the response stays small.
+    * **CSV file item** (what the "Gated Station Entries" datasets actually are)
+      — download the CSV via the item's ``/data`` endpoint and aggregate in
+      pandas.
+
+    Field names are auto-discovered (overridable via config). Returns
+    ``timestamp`` (daily, tz-aware), ``route`` (line), ``value`` (entry count).
+    Lines are summed downstream in :mod:`src.analysis.correlate`, so per-line
+    rows are fine.
     """
-    query_url = f"{_resolve_service_url(arcgis_item_id, service_url)}/{layer}/query"
+    url = service_url or _item_service_url(arcgis_item_id)
+    if url:
+        return _fetch_via_feature_service(
+            url, layer, start, end, timezone, date_field, count_field, line_field
+        )
+    # File item: download the CSV and aggregate client-side.
+    return _fetch_via_csv(
+        arcgis_item_id, start, end, timezone, date_field, count_field, line_field
+    )
 
-    fields = _discover_fields(query_url.rsplit("/query", 1)[0])
+
+# --- ArcGIS item resolution -------------------------------------------------
+
+def _item_service_url(item_id: str) -> str | None:
+    """Return the item's Feature Service URL, or None for a file (CSV) item."""
+    resp = requests.get(
+        ARCGIS_ITEM_API.format(item_id=item_id),
+        params={"f": "json"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    meta = resp.json()
+    url = (meta.get("url") or "").rstrip("/")
+    if not url:
+        # Diagnostic so a single run tells us exactly what the item is.
+        print(
+            f"[mbta] ArcGIS item {item_id} type={meta.get('type')!r} "
+            f"has no service URL — using CSV download path."
+        )
+        return None
+    return url
+
+
+# --- Feature-service path ---------------------------------------------------
+
+def _fetch_via_feature_service(
+    service_url, layer, start, end, timezone, date_field, count_field, line_field
+) -> pd.DataFrame:
+    query_url = f"{service_url}/{layer}/query"
+    fields = _discover_fields(f"{service_url}/{layer}")
     date_field = date_field or fields["date"]
     count_field = count_field or fields["count"]
-    line_field = line_field or fields["line"]  # may be None if no line column
+    line_field = line_field or fields["line"]
     if not date_field or not count_field:
         raise ValueError(
             "Could not determine date/count fields on the gated-entries layer; "
@@ -123,9 +168,7 @@ def fetch_gated_entries(
         )
 
     group_fields = [date_field] + ([line_field] if line_field else [])
-    where = (
-        f"{date_field} >= DATE '{start}' AND {date_field} <= DATE '{end}'"
-    )
+    where = f"{date_field} >= DATE '{start}' AND {date_field} <= DATE '{end}'"
     out_stats = (
         '[{"statisticType":"sum","onStatisticField":"%s",'
         '"outStatisticFieldName":"entries"}]' % count_field
@@ -171,27 +214,9 @@ def fetch_gated_entries(
 
     if not rows:
         return pd.DataFrame(columns=["timestamp", "route", "value"])
-
-    df = pd.DataFrame(rows)
-    df = df.dropna(subset=["value"]).reset_index(drop=True)
-    print(f"[mbta] {len(df)} daily gated-entry rows fetched (historical).")
+    df = pd.DataFrame(rows).dropna(subset=["value"]).reset_index(drop=True)
+    print(f"[mbta] {len(df)} daily gated-entry rows fetched (feature service).")
     return df
-
-
-def _resolve_service_url(item_id: str, service_url: str | None) -> str:
-    """Return the FeatureServer URL for an ArcGIS item id (or the override)."""
-    if service_url:
-        return service_url.rstrip("/")
-    resp = requests.get(
-        ARCGIS_ITEM_API.format(item_id=item_id),
-        params={"f": "json"},
-        timeout=REQUEST_TIMEOUT,
-    )
-    resp.raise_for_status()
-    url = resp.json().get("url")
-    if not url:
-        raise ValueError(f"ArcGIS item {item_id} has no service URL.")
-    return url.rstrip("/")
 
 
 def _discover_fields(layer_url: str) -> dict[str, str | None]:
@@ -200,6 +225,10 @@ def _discover_fields(layer_url: str) -> dict[str, str | None]:
     resp.raise_for_status()
     fields = resp.json().get("fields", [])
 
+    numeric_types = {
+        "esriFieldTypeInteger", "esriFieldTypeSmallInteger", "esriFieldTypeDouble",
+        "esriFieldTypeSingle", "esriFieldTypeBigInteger",
+    }
     date_field = count_field = line_field = None
     for f in fields:
         name = f.get("name", "")
@@ -207,10 +236,7 @@ def _discover_fields(layer_url: str) -> dict[str, str | None]:
         ftype = f.get("type", "")
         if date_field is None and (ftype == "esriFieldTypeDate" or "date" in low):
             date_field = name
-        if count_field is None and ("entr" in low or "gated" in low) and ftype in (
-            "esriFieldTypeInteger", "esriFieldTypeSmallInteger",
-            "esriFieldTypeDouble", "esriFieldTypeSingle", "esriFieldTypeBigInteger",
-        ):
+        if count_field is None and ("entr" in low or "gated" in low) and ftype in numeric_types:
             count_field = name
         if line_field is None and ("line" in low or "route" in low):
             line_field = name
@@ -230,6 +256,89 @@ def _parse_arcgis_date(value, timezone: str) -> pd.Timestamp | None:
         if ts.tzinfo is None:
             ts = ts.tz_localize(timezone)
     return ts.normalize()
+
+
+# --- CSV-file path ----------------------------------------------------------
+
+def _fetch_via_csv(
+    item_id, start, end, timezone, date_field, count_field, line_field
+) -> pd.DataFrame:
+    """Download the item's CSV data and aggregate to daily totals per line."""
+    resp = requests.get(
+        f"{ARCGIS_ITEM_API.format(item_id=item_id)}/data",
+        timeout=DOWNLOAD_TIMEOUT,
+    )
+    resp.raise_for_status()
+    raw = _read_tabular(resp.content)
+
+    detected = _detect_csv_fields(raw)
+    date_col = date_field or detected["date"]
+    count_col = count_field or detected["count"]
+    line_col = line_field or detected["line"]
+    print(f"[mbta] CSV columns={list(raw.columns)}; using date={date_col!r} "
+          f"count={count_col!r} line={line_col!r}")
+    if not date_col or not count_col:
+        raise ValueError(
+            "Could not determine date/count columns in the gated-entries CSV; "
+            "pin them via config (date_field / count_field)."
+        )
+
+    df = raw[[c for c in (date_col, line_col, count_col) if c]].copy()
+    df["_day"] = pd.to_datetime(df[date_col], errors="coerce").dt.normalize()
+    df = df.dropna(subset=["_day"])
+
+    lo, hi = pd.Timestamp(start), pd.Timestamp(end)
+    df = df[(df["_day"] >= lo) & (df["_day"] <= hi)]
+    if df.empty:
+        return pd.DataFrame(columns=["timestamp", "route", "value"])
+
+    df[count_col] = pd.to_numeric(df[count_col], errors="coerce")
+    group_cols = ["_day"] + ([line_col] if line_col else [])
+    agg = df.groupby(group_cols, dropna=False)[count_col].sum().reset_index()
+
+    out = pd.DataFrame({
+        "timestamp": agg["_day"].dt.tz_localize(timezone),
+        "route": agg[line_col].astype(str) if line_col else "all",
+        "value": agg[count_col],
+    }).dropna(subset=["value"]).reset_index(drop=True)
+    print(f"[mbta] {len(out)} daily gated-entry rows fetched (CSV, "
+          f"{out['timestamp'].dt.date.min()}..{out['timestamp'].dt.date.max()}).")
+    return out
+
+
+def _read_tabular(content: bytes) -> pd.DataFrame:
+    """Read CSV bytes, transparently handling a zipped bundle of CSVs."""
+    if content[:2] == b"PK":  # zip magic number
+        frames = []
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            for name in zf.namelist():
+                if name.lower().endswith(".csv"):
+                    with zf.open(name) as fh:
+                        frames.append(pd.read_csv(fh))
+        if not frames:
+            raise ValueError("Zip archive contained no CSV files.")
+        return pd.concat(frames, ignore_index=True)
+    return pd.read_csv(io.BytesIO(content))
+
+
+def _detect_csv_fields(df: pd.DataFrame) -> dict[str, str | None]:
+    """Guess the date, count, and line columns from a CSV's headers/dtypes."""
+    date_col = count_col = line_col = None
+    for col in df.columns:
+        low = str(col).lower()
+        if date_col is None and "date" in low:
+            date_col = col
+        if count_col is None and ("entr" in low or "gated" in low or "ridership" in low):
+            count_col = col
+        if line_col is None and ("line" in low or "route" in low):
+            line_col = col
+    # Fall back: first numeric column for the count if no name matched.
+    if count_col is None:
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                count_col = col
+                break
+    return {"date": date_col, "count": count_col, "line": line_col}
 
 
 # --- Live vehicle snapshot (fallback) ---------------------------------------

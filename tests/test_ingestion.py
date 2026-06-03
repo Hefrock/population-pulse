@@ -114,8 +114,9 @@ def test_eventbrite_no_key_returns_empty(monkeypatch):
 # --- MBTA historical gated-entries ------------------------------------------
 
 class _FakeResp:
-    def __init__(self, payload):
+    def __init__(self, payload=None, content=None):
         self._payload = payload
+        self.content = content
 
     def raise_for_status(self):
         pass
@@ -125,9 +126,9 @@ class _FakeResp:
 
 
 def _arcgis_router(monkeypatch, *, fields, features):
-    """Patch mbta.requests.get to emulate the 3-call ArcGIS conversation."""
+    """Patch mbta.requests.get to emulate the feature-service conversation."""
     def fake_get(url, params=None, timeout=None):
-        if "/sharing/rest/content/items/" in url:
+        if "/sharing/rest/content/items/" in url:  # item -> has a service url
             return _FakeResp({"url": "https://svc.example/arcgis/rest/services/X/FeatureServer"})
         if url.endswith("/0") or url.endswith("/0/"):
             return _FakeResp({"fields": fields})
@@ -188,6 +189,37 @@ def test_fetch_gated_entries_aggregates(monkeypatch):
     assert len(df) == 2
     assert set(df["route"]) == {"Red Line", "Orange Line"}
     assert df["value"].sum() == 12345 + 6789
+    assert str(df["timestamp"].dt.tz) == "America/New_York"
+
+
+def test_fetch_gated_entries_via_csv(monkeypatch):
+    """A file (CSV) item has no service URL, so we download and aggregate it."""
+    csv = (
+        "service_date,route_or_line,gated_entries\n"
+        "2025-06-15,Red Line,100\n"
+        "2025-06-15,Red Line,50\n"      # same day+line -> summed to 150
+        "2025-06-15,Orange Line,40\n"
+        "2030-01-01,Red Line,999\n"     # outside window -> dropped
+    ).encode()
+
+    def fake_get(url, params=None, timeout=None):
+        if url.endswith("/data"):
+            return _FakeResp(content=csv)
+        if "/sharing/rest/content/items/" in url:
+            return _FakeResp({"type": "CSV"})  # no 'url' -> CSV path
+        raise AssertionError(f"unexpected URL: {url}")
+    monkeypatch.setattr(mbta.requests, "get", fake_get)
+
+    df = mbta.fetch_gated_entries(
+        start="2025-06-01", end="2025-06-30",
+        timezone="America/New_York",
+        arcgis_item_id="dummy",
+    )
+    assert list(df.columns) == ["timestamp", "route", "value"]
+    assert set(df["route"]) == {"Red Line", "Orange Line"}
+    red = df.loc[df["route"] == "Red Line", "value"].iloc[0]
+    assert red == 150                     # 100 + 50, same day
+    assert df["value"].sum() == 150 + 40  # 2030 row excluded by date window
     assert str(df["timestamp"].dt.tz) == "America/New_York"
 
 
