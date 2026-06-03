@@ -99,7 +99,7 @@ def _epiweek_to_timestamp(epiweek: int, timezone: str) -> pd.Timestamp:
     year, week = divmod(epiweek, 100)
     dt = datetime.datetime.strptime(f"{year}-W{week:02d}-0", "%G-W%V-%w")
     return pd.Timestamp(dt).tz_localize(
-        timezone, nonexistent="shift_forward", ambiguous="raise"
+        timezone, nonexistent="shift_forward", ambiguous=False
     )
 
 

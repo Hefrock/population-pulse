@@ -128,9 +128,11 @@ def _extract_date(attrs: dict, timezone: str) -> pd.Timestamp | None:
         raw = attrs.get(field)
         if not raw:
             continue
-        # Recurring date fields come back as a list of dicts with "value".
+        # Recurring date fields come back as a list of dicts with "value",
+        # or occasionally as a list of bare ISO-date strings.
         if isinstance(raw, list) and raw:
-            raw = raw[0].get("value") or raw[0]
+            item = raw[0]
+            raw = item.get("value") or item if isinstance(item, dict) else item
         if isinstance(raw, dict):
             raw = raw.get("value") or raw.get("start_value")
         try:
