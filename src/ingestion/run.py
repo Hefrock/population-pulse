@@ -19,9 +19,9 @@ from src.providers import load_provider
 
 
 def _default_range() -> tuple[str, str]:
-    """Default to the trailing 90 days."""
+    """Default to the trailing 365 days."""
     end = date.today()
-    start = end - timedelta(days=90)
+    start = end - timedelta(days=365)
     return start.isoformat(), end.isoformat()
 
 

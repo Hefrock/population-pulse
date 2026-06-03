@@ -1,27 +1,13 @@
 """Hospital-demand fetcher (the dependent variable).
 
-This is the hardest signal to automate and the most important to get right, so
-read this carefully.
+Three-tier fallback:
+  1. MA DPH manual CSV  — actual ED visit counts (best); download weekly from
+     https://www.mass.gov/info-details/weekly-flu-report into data/ma_dph_respiratory.csv
+  2. CDC FluView ILINet — automated weekly ILI proxy; no key, goes back to 1997
+  3. Bundled sample     — synthetic data for offline testing only
 
-Massachusetts DPH publishes weekly ED-visit and hospital-admission data for
-respiratory illness, and 100% of MA emergency departments report into the
-NSSP/ESSENCE platform behind it. But the *public* surface is a Tableau-style
-dashboard plus a downloadable data file that is republished weekly — there is no
-clean public JSON API. The real-time ESSENCE feed exists but is restricted to
-public-health jurisdictions.
-
-So Phase 1 handles this in two layers:
-
-1. ``fetch_ma_dph_respiratory`` — the interface method. It reads a locally
-   cached copy of the weekly data file (``data/ma_dph_respiratory.csv``) that
-   you download from the dashboard. If it's absent, it falls back to a bundled
-   sample so the pipeline runs end-to-end.
-
-2. A documented manual refresh step (see ``REFRESH.md`` note below) until/unless
-   we automate the dashboard download in Phase 2.
-
-This honest design keeps the dependent variable trustworthy rather than scraping
-something fragile and pretending it's real-time.
+The CDC FluView tier means the pipeline produces real (if proxy) data without
+any manual steps. Swap in the MA DPH file when you want the actual ED numbers.
 """
 
 from __future__ import annotations
@@ -29,6 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+
+from src.ingestion import cdc_fluview
 
 CACHED_PATH = Path("data/ma_dph_respiratory.csv")
 SAMPLE_PATH = Path("data/samples/hospital_demand_sample.csv")
@@ -39,32 +27,43 @@ def fetch_ma_dph_respiratory(
     start: str,
     end: str,
     timezone: str,
+    state: str = "Massachusetts",
 ) -> pd.DataFrame:
-    """Return weekly hospital-demand metrics as ``timestamp``, ``metric``,
-    ``value``.
+    """Return weekly hospital-demand metrics as ``timestamp``, ``metric``, ``value``.
 
-    Prefers the manually-refreshed cache; falls back to the bundled sample.
-
-    Phase 2 TODO: automate the weekly dashboard download. The dashboard lives at
-    https://www.mass.gov/info-details/weekly-flu-report and links a downloadable
-    data file that is replaced each Thursday. Environmental hospitalizations
-    (asthma, heat stress, COPD) for the weather sub-hypothesis come from
-    https://www.mass.gov/info-details/environmental-hospitalization-data
+    Tries MA DPH manual cache first, then CDC FluView, then bundled sample.
     """
-    source = CACHED_PATH if CACHED_PATH.exists() else SAMPLE_PATH
-    if not source.exists():
-        raise FileNotFoundError(
-            "No hospital-demand data found. Download the weekly file from the "
-            "MA DPH respiratory dashboard into data/ma_dph_respiratory.csv, or "
-            "run `python -m src.ingestion.make_samples` for a placeholder."
-        )
-    if source is SAMPLE_PATH:
-        print("[hospital] Using SAMPLE hospital-demand data (not real DPH data).")
+    # Tier 1: MA DPH manual download (actual ED data)
+    if CACHED_PATH.exists():
+        print("[hospital] Using MA DPH manual data.")
+        return _load_csv(CACHED_PATH, metrics, start, end, timezone)
 
-    df = pd.read_csv(source, parse_dates=["timestamp"])
+    # Tier 2: CDC FluView ILINet (automated ILI proxy)
+    ili_df = cdc_fluview.fetch_ili_data(state=state, start=start, end=end, timezone=timezone)
+    if not ili_df.empty:
+        return ili_df
+
+    # Tier 3: synthetic sample — offline / CI testing only
+    print(
+        "\n⚠️  WARNING: [hospital] Falling back to SYNTHETIC sample data.\n"
+        "   Correlations computed with this data are not meaningful.\n"
+        "   To use real data, either download the MA DPH file or ensure\n"
+        "   CDC FluView (Delphi Epidata API) is reachable.\n"
+    )
+    if not SAMPLE_PATH.exists():
+        raise FileNotFoundError(
+            "No hospital-demand data found. Run `python -m src.ingestion.make_samples` "
+            "to regenerate the sample, or download the MA DPH file."
+        )
+    return _load_csv(SAMPLE_PATH, metrics, start, end, timezone)
+
+
+def _load_csv(
+    path: Path, metrics: list[str], start: str, end: str, timezone: str
+) -> pd.DataFrame:
+    df = pd.read_csv(path, parse_dates=["timestamp"])
     if df["timestamp"].dt.tz is None:
         df["timestamp"] = df["timestamp"].dt.tz_localize(timezone)
-
     mask = (
         (df["timestamp"] >= pd.Timestamp(start, tz=timezone))
         & (df["timestamp"] <= pd.Timestamp(end, tz=timezone))

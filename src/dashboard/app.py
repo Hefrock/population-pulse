@@ -16,10 +16,20 @@ data/<city>/.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+# Bridge Streamlit Cloud secrets → os.environ so all fetchers work unchanged.
+# On local runs this is a no-op when no secrets.toml is present.
+try:
+    for _k in ["MBTA_API_KEY", "TICKETMASTER_API_KEY", "EVENTBRITE_API_KEY"]:
+        if _k in st.secrets and _k not in os.environ:
+            os.environ[_k] = st.secrets[_k]
+except Exception:
+    pass
 
 from src.analysis.correlate import align, lagged_cross_correlation
 from src.providers import load_provider

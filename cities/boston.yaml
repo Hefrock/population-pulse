@@ -77,8 +77,10 @@ events:
 # --- Hospital-demand signal (the dependent variable) ------------------------
 
 hospital_demand:
-  # Public, weekly. This is the realistic ceiling for a non-public-health user.
+  # Three-tier fallback: MA DPH manual CSV → CDC FluView ILINet → sample data.
+  # CDC FluView runs automatically with no key; MA DPH gives actual ED counts.
   provider: ma_dph_respiratory
+  state: Massachusetts
   dashboard_url: https://www.mass.gov/info-details/weekly-flu-report
   cadence: weekly
   metrics:

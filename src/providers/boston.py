@@ -108,4 +108,5 @@ class BostonProvider(CityDataProvider):
             start=start,
             end=end,
             timezone=self.timezone,
+            state=cfg.get("state", "Massachusetts"),
         )
