@@ -47,11 +47,27 @@ weather:
     - precipitation
 
 events:
-  # Phase 1 uses a hand-maintained CSV of known large gatherings so we have
-  # clean, datable events to test against. Phase 2 can automate venue-calendar
-  # ingestion.
-  provider: manual_csv
-  path: data/boston_events.csv
+  # Manual CSV is always loaded as a baseline. Ticketmaster and Eventbrite
+  # augment it automatically when their keys are present. All three sources
+  # are merged and deduplicated in the provider.
+  manual_csv:
+    path: data/boston_events.csv
+
+  ticketmaster:
+    base_url: https://app.ticketmaster.com/discovery/v2
+    city: Boston
+    state_code: MA
+    # Sports and Music drive the largest single-day crowd spikes.
+    segments:
+      - Sports
+      - Music
+
+  eventbrite:
+    base_url: https://www.eventbriteapi.com/v3
+    # Civic events (marathons, festivals, parades) missing from Ticketmaster.
+    location: "Boston, MA, USA"
+    radius: 25mi
+
   venues:
     - TD Garden
     - Fenway Park
