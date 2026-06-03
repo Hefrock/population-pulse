@@ -1,0 +1,144 @@
+# Getting Started — Phase 1
+
+This is the first chapter of a tutorial that grows with the project. By the end
+you'll have the pipeline running end-to-end on sample data, you'll understand
+why each piece exists, and you'll know exactly what to swap in to use real data.
+
+Each later phase appends its own chapter rather than rewriting this one, so you
+can always retrace how the project evolved.
+
+---
+
+## 1. The question, restated
+
+We want to know whether **surges in a city's population — from events, weather,
+and disease — line up with increased demand on hospital emergency departments.**
+
+The word "surges" is doing a lot of work. We can't directly count "how many
+people are in Boston right now," so we use *proxies* for population flow (transit
+ridership, traffic, event schedules) and correlate them against a *proxy* for
+hospital demand (weekly ED-visit data). Phase 1 is about getting those proxies
+onto one timeline so we can look at them together.
+
+## 2. The single most important constraint
+
+Before any code: **real-time, hospital-specific bed data is not public.** The
+best a non-public-health user can get is *weekly* ED-visit syndromic data from
+Massachusetts DPH. Everything about the design follows from that one fact:
+
+- Our analysis resolution is **weekly**, not minute-by-minute.
+- Minute-level signals (transit) get **aggregated up** to weekly.
+- Single-night events may **wash out** in weekly numbers — which is why we test
+  weather and disease (big, sustained effects) before large gatherings.
+
+If you ever get access to CDC's NSSP/ESSENCE feed (restricted to public-health
+jurisdictions), you can drop to daily resolution and the project gets much
+sharper. Until then, weekly is the honest ceiling.
+
+## 3. Set up
+
+```bash
+git clone <your-repo-url> population-pulse
+cd population-pulse
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Generate the synthetic sample data so everything runs offline:
+
+```bash
+python -m src.ingestion.make_samples
+```
+
+This writes *fake but realistic* data with a planted winter respiratory surge
+and a summer heat spike. We use it to confirm the analysis code can detect
+relationships we know are there before trusting it on real data.
+
+## 4. Run the pipeline
+
+```bash
+python -m src.ingestion.run --city boston --start 2024-06-01 --end 2025-05-31
+```
+
+You'll see a per-signal summary. Under the hood, `run.py` asked the **Boston
+provider** for each signal, and the provider delegated to a **fetcher** per
+source. That indirection is the key design choice — see §6.
+
+## 5. Explore it
+
+```bash
+streamlit run src/dashboard/app.py
+```
+
+The dashboard shows every signal on a shared weekly timeline and lets you run a
+**lagged cross-correlation** between any driver and hospital demand. Try
+correlating `transit` against `hospital_demand` with deseasonalizing on, then
+off, and watch how much the apparent relationship changes. That difference *is*
+the lesson of §7.
+
+## 6. Why the architecture looks the way it does
+
+You'll notice a `CityDataProvider` base class and a `BostonProvider` subclass.
+That feels like extra ceremony for one city — but you told us you'll want other
+cities later. By isolating every Boston-specific fact (which API, which station
+codes, which dashboard) behind a common interface now, adding Chicago later
+means writing *one new provider*, not editing the pipeline, the analysis, or the
+dashboard. The cost is a little structure today; the payoff is not rewriting
+everything in three months.
+
+The flow is:
+
+```
+run.py / dashboard
+      │  (only ever calls the abstract interface)
+      ▼
+CityDataProvider  ◄── cities/boston.yaml  (all Boston-specific config)
+      │
+      ▼
+BostonProvider
+      │  (delegates per source)
+      ▼
+ingestion/{mbta, weather, events, hospital}.py
+```
+
+## 7. The trap you must not fall into
+
+Transit ridership, ED visits, and disease **all rise in winter**. So if you
+correlate raw transit against raw ED visits, you'll get a strong positive number
+that means almost nothing — they're both just following the calendar.
+
+This is why `lagged_cross_correlation` **deseasonalizes by default**: it strips a
+rolling seasonal mean from both series before comparing them. It's also why we
+scan a *range of lags* rather than just lag 0 — real effects are delayed
+(disease incubation is up to ~2 weeks). Even with these guards, Phase 1
+correlation is **suggestive, not causal**. Phase 2 introduces matched-baseline
+event studies, which are much stronger evidence.
+
+## 8. Going from sample data to real data
+
+Each fetcher is honest about what it does:
+
+- **Weather** (`ingestion/weather.py`) — *fully working now.* Open-Meteo needs
+  no key; real historical weather is one function call away.
+- **Transit** (`ingestion/mbta.py`) — has a *working live call*
+  (`fetch_live_vehicle_counts`) against the real MBTA API. Get a free key at
+  https://api-v3.mbta.com/, put it in `.env`, and the scheduled Action will
+  start accumulating real flow snapshots.
+- **Events** (`ingestion/events.py`) — reads `data/boston_events.csv`. Just edit
+  that CSV with real dates; it's already wired in.
+- **Hospital demand** (`ingestion/hospital.py`) — download the weekly file from
+  the [MA DPH respiratory dashboard](https://www.mass.gov/info-details/weekly-flu-report)
+  into `data/ma_dph_respiratory.csv` and it takes over from the sample
+  automatically.
+
+Swap them in one at a time. The pipeline keeps running even if a source is
+missing, so you're never blocked.
+
+## 9. What's next (Phase 2 preview)
+
+- Automate the MA DPH weekly download.
+- Add **event-study analysis**: compare ED demand on event days against matched
+  non-event baseline days, per sub-hypothesis.
+- Quantify effect sizes and lags with confidence intervals.
+
+That chapter will land as `docs/02-event-studies.md` when we build it.

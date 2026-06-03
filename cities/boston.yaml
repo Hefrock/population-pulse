@@ -1,0 +1,93 @@
+# Boston configuration for population-pulse.
+#
+# This file is the single place where Boston-specific facts live. To add another
+# city later, copy this file (e.g. cities/chicago.yaml), fill in that city's
+# equivalents, and write a matching provider in src/providers/. No pipeline code
+# should need to change.
+
+city:
+  name: Boston
+  slug: boston
+  timezone: America/New_York
+  # Rough centroid, used for weather lookups and map centering.
+  latitude: 42.3601
+  longitude: -71.0589
+
+# --- Population-flow signals -------------------------------------------------
+
+transit:
+  provider: mbta
+  # MBTA V3 API. Key is free from https://api-v3.mbta.com/ — set MBTA_API_KEY
+  # in your environment / .env file. The base URL is here; the key is NOT
+  # (never commit secrets).
+  base_url: https://api-v3.mbta.com
+  # Subway lines are the cleanest ingress/egress proxy for the dense core.
+  routes:
+    - Red
+    - Orange
+    - Blue
+    - Green-B
+    - Green-C
+    - Green-D
+    - Green-E
+  # Stations near major venues — useful for event-impact analysis later.
+  venue_stations:
+    td_garden: place-north        # North Station (Celtics, Bruins, concerts)
+    fenway: place-kencl           # Kenmore (Red Sox, Fenway concerts)
+    bcec: place-wtcst             # World Trade Center (conventions)
+
+weather:
+  provider: open_meteo
+  # Open-Meteo needs no API key. We pull temperature, heat index, and
+  # precipitation — the drivers behind heat stress, cold, and asthma ED visits.
+  base_url: https://api.open-meteo.com/v1/forecast
+  variables:
+    - temperature_2m
+    - apparent_temperature
+    - precipitation
+
+events:
+  # Phase 1 uses a hand-maintained CSV of known large gatherings so we have
+  # clean, datable events to test against. Phase 2 can automate venue-calendar
+  # ingestion.
+  provider: manual_csv
+  path: data/boston_events.csv
+  venues:
+    - TD Garden
+    - Fenway Park
+    - Boston Convention and Exhibition Center
+    - Gillette Stadium   # outside the core but draws regional flow
+
+# --- Hospital-demand signal (the dependent variable) ------------------------
+
+hospital_demand:
+  # Public, weekly. This is the realistic ceiling for a non-public-health user.
+  provider: ma_dph_respiratory
+  dashboard_url: https://www.mass.gov/info-details/weekly-flu-report
+  cadence: weekly
+  metrics:
+    - ed_visits_respiratory
+    - hospital_admissions_respiratory
+  # Environmental hospitalizations (asthma, heat stress, COPD, CO, MI) directly
+  # support the weather/seasonal sub-hypothesis.
+  environmental_url: https://www.mass.gov/info-details/environmental-hospitalization-data
+
+hospital_locations:
+  # Static reference layer (MassGIS acute care hospitals) for geographic
+  # matching of flow signals to nearby EDs.
+  provider: massgis
+  layer: acute_care_hospitals
+
+# --- Analysis defaults -------------------------------------------------------
+
+analysis:
+  # Common resolution everything is aggregated/resampled to. Weekly is forced by
+  # the hospital data; daily is available for the flow signals and used in
+  # Phase 2 event studies.
+  base_resolution: weekly
+  # Lag windows (in days) to scan for each sub-hypothesis in cross-correlation.
+  lag_windows:
+    large_gatherings: [0, 3]
+    weather: [0, 5]
+    disease: [0, 14]
+    commute: [0, 1]
