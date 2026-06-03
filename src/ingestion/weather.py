@@ -53,6 +53,6 @@ def fetch_open_meteo(
 
     df = pd.DataFrame(hourly).rename(columns={"time": "timestamp"})
     df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(
-        timezone, nonexistent="shift_forward", ambiguous="infer"
+        timezone, nonexistent="shift_forward", ambiguous=False
     )
     return df
