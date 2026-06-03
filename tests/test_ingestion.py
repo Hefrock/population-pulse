@@ -10,6 +10,7 @@ import pytest
 from src.ingestion.cdc_fluview import _date_to_epiweek, _epiweek_to_timestamp
 from src.ingestion.ticketmaster import _empty_frame as tm_empty
 from src.ingestion.eventbrite import _empty_frame as eb_empty
+from src.ingestion import mbta
 
 
 # --- CDC FluView epiweek helpers -------------------------------------------
@@ -108,3 +109,217 @@ def test_eventbrite_no_key_returns_empty(monkeypatch):
         timezone="America/New_York",
     )
     assert df.empty
+
+
+# --- Boston.gov civic events ------------------------------------------------
+
+def test_civic_events_http_error_returns_empty(monkeypatch):
+    """Any HTTP error from Boston.gov returns empty, not an exception."""
+    from src.ingestion import civic_events
+
+    monkeypatch.setattr(
+        civic_events.requests, "get",
+        lambda *a, **k: _FakeResp({"data": [], "links": {}}),
+    )
+    df = civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
+        timezone="America/New_York",
+    )
+    assert df.empty
+
+
+def test_civic_events_parses_drupal_jsonapi(monkeypatch):
+    """A valid Drupal JSON:API payload is parsed into the standard schema."""
+    from src.ingestion import civic_events
+
+    future = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(days=30)).isoformat()
+    payload = {
+        "data": [
+            {
+                "type": "node--event",
+                "attributes": {
+                    "title": "Boston Marathon",
+                    "field_event_date_recur": [{"value": future}],
+                },
+            }
+        ],
+        "links": {},
+    }
+    monkeypatch.setattr(
+        civic_events.requests, "get",
+        lambda *a, **k: _FakeResp(payload),
+    )
+    df = civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
+        timezone="America/New_York",
+    )
+    assert not df.empty
+    assert list(df.columns) == ["timestamp", "venue", "name", "expected_attendance", "source"]
+    assert df["name"].iloc[0] == "Boston Marathon"
+    assert df["source"].iloc[0] == "boston_gov"
+
+
+def test_ticketmaster_uses_classificationname(monkeypatch):
+    """fetch_events sends classificationName (not segmentName) to the API."""
+    import os
+    from src.ingestion import ticketmaster
+
+    monkeypatch.setenv("TICKETMASTER_API_KEY", "testkey")
+    captured = {}
+
+    def fake_get(url, params=None, timeout=None):
+        captured.update(params or {})
+        return _FakeResp({"page": {"totalPages": 1}, "_embedded": {"events": []}})
+
+    monkeypatch.setattr(ticketmaster.requests, "get", fake_get)
+    ticketmaster.fetch_events(
+        base_url="https://app.ticketmaster.com/discovery/v2",
+        city="Boston", state_code="MA",
+        start="2025-01-01", end="2025-03-31",
+        timezone="America/New_York",
+        segments=["Sports", "Music"],
+    )
+    assert "classificationName" in captured
+    assert "segmentName" not in captured
+
+
+# --- MBTA historical gated-entries ------------------------------------------
+
+class _FakeResp:
+    def __init__(self, payload=None, content=None, status_code=200):
+        self._payload = payload
+        self.content = content
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def _arcgis_router(monkeypatch, *, fields, features):
+    """Patch mbta.requests.get to emulate the feature-service conversation."""
+    def fake_get(url, params=None, timeout=None):
+        if "/sharing/rest/content/items/" in url:  # item -> has a service url
+            return _FakeResp({"url": "https://svc.example/arcgis/rest/services/X/FeatureServer"})
+        if url.endswith("/0") or url.endswith("/0/"):
+            return _FakeResp({"fields": fields})
+        if url.endswith("/query"):
+            return _FakeResp({"features": features})
+        raise AssertionError(f"unexpected URL: {url}")
+    monkeypatch.setattr(mbta.requests, "get", fake_get)
+
+
+def test_parse_arcgis_date_epoch_ms_normalizes_to_day():
+    # 2025-06-15 12:34 UTC in epoch ms -> normalized to the local day.
+    ms = int(pd.Timestamp("2025-06-15T12:34:00Z").value // 1_000_000)
+    ts = mbta._parse_arcgis_date(ms, "America/New_York")
+    assert ts is not None
+    assert ts.hour == 0 and ts.minute == 0       # normalized
+    assert str(ts.tz) == "America/New_York"
+    assert ts.date().isoformat() == "2025-06-15"
+
+
+def test_discover_fields_picks_date_count_and_line(monkeypatch):
+    fields = [
+        {"name": "OBJECTID", "type": "esriFieldTypeOID"},
+        {"name": "service_date", "type": "esriFieldTypeDate"},
+        {"name": "route_or_line", "type": "esriFieldTypeString"},
+        {"name": "gated_entries", "type": "esriFieldTypeInteger"},
+    ]
+    monkeypatch.setattr(
+        mbta.requests, "get",
+        lambda url, params=None, timeout=None: _FakeResp({"fields": fields}),
+    )
+    got = mbta._discover_fields("https://svc.example/FeatureServer/0")
+    assert got == {
+        "date": "service_date",
+        "count": "gated_entries",
+        "line": "route_or_line",
+    }
+
+
+def test_fetch_gated_entries_aggregates(monkeypatch):
+    fields = [
+        {"name": "service_date", "type": "esriFieldTypeDate"},
+        {"name": "route_or_line", "type": "esriFieldTypeString"},
+        {"name": "gated_entries", "type": "esriFieldTypeInteger"},
+    ]
+    day = int(pd.Timestamp("2025-06-15T00:00:00Z").value // 1_000_000)
+    features = [
+        {"attributes": {"service_date": day, "route_or_line": "Red Line", "entries": 12345}},
+        {"attributes": {"service_date": day, "route_or_line": "Orange Line", "entries": 6789}},
+    ]
+    _arcgis_router(monkeypatch, fields=fields, features=features)
+
+    df = mbta.fetch_gated_entries(
+        start="2025-06-01", end="2025-06-30",
+        timezone="America/New_York",
+        arcgis_item_id="dummy",
+    )
+    assert list(df.columns) == ["timestamp", "route", "value"]
+    assert len(df) == 2
+    assert set(df["route"]) == {"Red Line", "Orange Line"}
+    assert df["value"].sum() == 12345 + 6789
+    assert str(df["timestamp"].dt.tz) == "America/New_York"
+
+
+def test_fetch_gated_entries_via_csv(monkeypatch):
+    """A file (CSV) item has no service URL, so we download and aggregate it."""
+    csv = (
+        "service_date,route_or_line,gated_entries\n"
+        "2025-06-15,Red Line,100\n"
+        "2025-06-15,Red Line,50\n"      # same day+line -> summed to 150
+        "2025-06-15,Orange Line,40\n"
+        "2030-01-01,Red Line,999\n"     # outside window -> dropped
+    ).encode()
+
+    def fake_get(url, params=None, timeout=None):
+        if url.endswith("/data"):
+            return _FakeResp(content=csv)
+        if "/sharing/rest/content/items/" in url:
+            return _FakeResp({"type": "CSV"})  # no 'url' -> CSV path
+        raise AssertionError(f"unexpected URL: {url}")
+    monkeypatch.setattr(mbta.requests, "get", fake_get)
+
+    df = mbta.fetch_gated_entries(
+        start="2025-06-01", end="2025-06-30",
+        timezone="America/New_York",
+        arcgis_item_id="dummy",
+    )
+    assert list(df.columns) == ["timestamp", "route", "value"]
+    assert set(df["route"]) == {"Red Line", "Orange Line"}
+    red = df.loc[df["route"] == "Red Line", "value"].iloc[0]
+    assert red == 150                     # 100 + 50, same day
+    assert df["value"].sum() == 150 + 40  # 2030 row excluded by date window
+    assert str(df["timestamp"].dt.tz) == "America/New_York"
+
+
+def test_fetch_ridership_falls_back_to_sample_when_historical_fails(monkeypatch, tmp_path):
+    # Historical raises -> no live key -> sample is used (must not raise).
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(mbta.requests, "get", boom)
+    monkeypatch.delenv("MBTA_API_KEY", raising=False)
+
+    # Point the sample loader at a tiny fixture so the test is hermetic.
+    sample = tmp_path / "mbta_ridership_sample.csv"
+    pd.DataFrame({
+        "timestamp": ["2025-06-10", "2025-06-11"],
+        "route": ["Red", "Red"],
+        "value": [100, 110],
+    }).to_csv(sample, index=False)
+    monkeypatch.setattr(mbta, "SAMPLE_PATH", sample)
+
+    df = mbta.fetch_ridership(
+        base_url="https://api-v3.mbta.com",
+        routes=["Red"],
+        start="2025-06-01", end="2025-06-30",
+        timezone="America/New_York",
+        historical={"arcgis_item_id": "dummy"},
+    )
+    assert not df.empty
+    assert list(df.columns) == ["timestamp", "route", "value"]

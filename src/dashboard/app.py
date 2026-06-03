@@ -141,11 +141,32 @@ def main() -> None:
         k: v for k, v in signals.items()
         if k != "events" and not v.empty
     }
+
+    # Hospital demand has multiple metric rows per week (ILI patients +
+    # total patients). Keep only the primary metric so the weekly sum in
+    # align() reflects ILI patients rather than an arbitrary mixture.
+    hd = numeric_signals.get("hospital_demand", pd.DataFrame())
+    if not hd.empty and "metric" in hd.columns:
+        primary = hd[hd["metric"] == "ili_patients"]
+        numeric_signals["hospital_demand"] = primary if not primary.empty else hd
+
     aligned = align(numeric_signals, resolution="W")
     if aligned.empty:
         st.warning("No numeric signals to display for this date range.")
         return
-    st.line_chart(aligned)
+
+    # Standardize each signal (z-score) for the line chart.
+    # Signals have incompatible units and scales (ridership in millions,
+    # temperature in °C, ILI patients in hundreds) — raw values make one
+    # signal dominate the chart. Correlation below uses the raw aligned frame.
+    std = aligned.std()
+    mean = aligned.mean()
+    aligned_display = (aligned - mean) / std.replace(0, 1)
+    st.line_chart(aligned_display)
+    st.caption(
+        "Signals shown as z-scores (mean 0, std 1) so different units "
+        "are comparable. Raw values are used for the correlation below."
+    )
 
     # --- Lagged cross-correlation -------------------------------------------
     st.subheader("Lagged cross-correlation vs. hospital demand")

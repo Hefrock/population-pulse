@@ -19,8 +19,25 @@ transit:
   provider: mbta
   # MBTA V3 API. Key is free from https://api-v3.mbta.com/ — set MBTA_API_KEY
   # in your environment / .env file. The base URL is here; the key is NOT
-  # (never commit secrets).
+  # (never commit secrets). The V3 API only exposes a real-time snapshot, so
+  # it is now a fallback; the primary transit signal is historical ridership.
   base_url: https://api-v3.mbta.com
+
+  # Primary signal: MBTA "Gated Station Entries" (fare-gate taps), published on
+  # the MBTA/MassDOT ArcGIS open-data portal. Daily counts by station/line from
+  # 2014 to present, no API key. This is a real historical series that can be
+  # correlated against the year of weekly hospital data.
+  #
+  # The fetcher resolves the live FeatureServer URL from this stable item id and
+  # auto-discovers the date/count/line field names, so it survives schema
+  # changes. Pin the *_field overrides only if auto-discovery guesses wrong.
+  historical:
+    arcgis_item_id: 7859894afb5641ce91a2bb03599fdf5b
+    # service_url:  https://services1.arcgis.com/.../FeatureServer  # optional override
+    # date_field:   service_date
+    # count_field:  gated_entries
+    # line_field:   route_or_line
+
   # Subway lines are the cleanest ingress/egress proxy for the dense core.
   routes:
     - Red
@@ -57,16 +74,18 @@ events:
     base_url: https://app.ticketmaster.com/discovery/v2
     city: Boston
     state_code: MA
-    # Sports and Music drive the largest single-day crowd spikes.
+    # classificationName accepts comma-separated values; both Sports and Music
+    # are fetched in a single query. The fetcher always queries forward
+    # (today → today+365) since the Discovery API only exposes upcoming events.
     segments:
       - Sports
       - Music
 
-  eventbrite:
-    base_url: https://www.eventbriteapi.com/v3
-    # Civic events (marathons, festivals, parades) missing from Ticketmaster.
-    location: "Boston, MA, USA"
-    radius: 25mi
+  civic_events:
+    # Boston.gov publishes its event calendar through a Drupal JSON:API endpoint.
+    # No API key required. Covers civic gatherings Ticketmaster misses:
+    # marathons, festivals, parades, community health fairs.
+    base_url: https://www.boston.gov
 
   venues:
     - TD Garden
