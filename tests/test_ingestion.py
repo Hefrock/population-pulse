@@ -51,11 +51,24 @@ def test_weather_dst_localize_nonexistent():
         "2026-03-08 03:00",
     ])
     result = naive.tz_localize(
-        "America/New_York", nonexistent="shift_forward", ambiguous="raise"
+        "America/New_York", nonexistent="shift_forward", ambiguous=False
     )
-    # The nonexistent 02:00 should land at 03:00 EDT
     assert result[1] == result[2]
     assert result[1].hour == 3
+
+
+def test_weather_dst_localize_ambiguous():
+    """The ambiguous 1 AM fall-back hour must not crash (ambiguous=False → standard time)."""
+    naive = pd.to_datetime([
+        "2025-11-02 00:00",
+        "2025-11-02 01:00",  # ambiguous — occurs twice during fall-back
+        "2025-11-02 02:00",
+    ])
+    result = naive.tz_localize(
+        "America/New_York", nonexistent="shift_forward", ambiguous=False
+    )
+    assert result is not None
+    assert len(result) == 3
 
 
 # --- Fetcher empty-frame schema contracts -----------------------------------
