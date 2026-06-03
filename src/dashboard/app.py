@@ -14,7 +14,15 @@ Run locally:
 from __future__ import annotations
 
 import io
+import os
+import sys
 from pathlib import Path
+
+# Streamlit Cloud runs this file directly, so the repo root is not
+# automatically on sys.path. Insert it so src.* imports resolve correctly.
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 import pandas as pd
 import requests
@@ -22,9 +30,6 @@ import streamlit as st
 
 from src.analysis.correlate import align, lagged_cross_correlation
 
-# Base URL for the data branch — override via POPULATION_PULSE_DATA_URL env var
-# if you fork the repo.
-import os
 DATA_BRANCH_BASE = os.environ.get(
     "POPULATION_PULSE_DATA_URL",
     "https://raw.githubusercontent.com/hefrock/population-pulse/data",
