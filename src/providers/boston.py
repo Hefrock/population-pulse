@@ -24,6 +24,9 @@ class BostonProvider(CityDataProvider):
             start=start,
             end=end,
             timezone=self.timezone,
+            # Prefer historical gated-entry ridership; fall back to the live
+            # snapshot (when MBTA_API_KEY is set) and then the bundled sample.
+            historical=cfg.get("historical"),
             # live=None lets the fetcher auto-detect based on MBTA_API_KEY
         )
 

@@ -19,8 +19,25 @@ transit:
   provider: mbta
   # MBTA V3 API. Key is free from https://api-v3.mbta.com/ — set MBTA_API_KEY
   # in your environment / .env file. The base URL is here; the key is NOT
-  # (never commit secrets).
+  # (never commit secrets). The V3 API only exposes a real-time snapshot, so
+  # it is now a fallback; the primary transit signal is historical ridership.
   base_url: https://api-v3.mbta.com
+
+  # Primary signal: MBTA "Gated Station Entries" (fare-gate taps), published on
+  # the MBTA/MassDOT ArcGIS open-data portal. Daily counts by station/line from
+  # 2014 to present, no API key. This is a real historical series that can be
+  # correlated against the year of weekly hospital data.
+  #
+  # The fetcher resolves the live FeatureServer URL from this stable item id and
+  # auto-discovers the date/count/line field names, so it survives schema
+  # changes. Pin the *_field overrides only if auto-discovery guesses wrong.
+  historical:
+    arcgis_item_id: 7859894afb5641ce91a2bb03599fdf5b
+    # service_url:  https://services1.arcgis.com/.../FeatureServer  # optional override
+    # date_field:   service_date
+    # count_field:  gated_entries
+    # line_field:   route_or_line
+
   # Subway lines are the cleanest ingress/egress proxy for the dense core.
   routes:
     - Red

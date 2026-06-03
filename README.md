@@ -15,7 +15,7 @@ This project builds a data pipeline and dashboard to explore that question for B
 ## What it does
 
 1. **Ingests four signals daily** via GitHub Actions:
-   - Transit volume (MBTA subway ridership)
+   - Transit volume (MBTA gated station entries — historical daily ridership)
    - Weather (temperature, apparent temperature, precipitation)
    - Events (Sports and Music events via Ticketmaster; civic events via Eventbrite)
    - Hospital demand (CDC FluView ILI patient counts; upgradeable to MA DPH ED data)
@@ -45,7 +45,8 @@ These are analyzed separately because they'd confound each other in a single cor
 
 | Signal | Source | Cadence | Key required |
 |--------|--------|---------|-------------|
-| Transit | MBTA V3 API | Real-time snapshot | Free — `api-v3.mbta.com` |
+| Transit | MBTA Gated Station Entries (MassDOT open data) | Daily, 2014–present | None |
+| Transit (fallback) | MBTA V3 API | Real-time snapshot | Free — `api-v3.mbta.com` |
 | Weather | Open-Meteo archive | Hourly historical | None |
 | Events | Ticketmaster Discovery API | On-demand | Free — `developer.ticketmaster.com` |
 | Events (civic) | Eventbrite API | On-demand | Free — `eventbrite.com/platform` |
@@ -101,7 +102,7 @@ population-pulse/
 │   ├── ingestion/       # source fetchers (mbta, weather, ticketmaster, ...)
 │   ├── analysis/        # timeline alignment + lagged correlation
 │   └── dashboard/       # Streamlit app
-├── tests/               # pytest suite (15 tests)
+├── tests/               # pytest suite (20 tests)
 ├── docs/                # narrated walkthrough
 └── .github/workflows/   # daily ingestion + test gate
 ```
@@ -125,7 +126,7 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 | Ingestion pipeline | Working — MBTA, weather, Ticketmaster, CDC FluView |
 | Daily GitHub Actions | Working |
 | Dashboard | Working — reads from data branch, no secrets needed |
-| Test suite | 15 tests, all passing |
+| Test suite | 20 tests, all passing |
 | Phase 2 event studies | Planned |
 | Second city | Architecture ready |
 
