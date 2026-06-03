@@ -1,0 +1,55 @@
+name: Daily Ingestion
+
+on:
+  schedule:
+    # 6 AM UTC = 2 AM ET — runs after midnight, before business hours
+    - cron: '0 6 * * *'
+  # Also allow manual trigger from the Actions tab for testing
+  workflow_dispatch:
+    inputs:
+      start:
+        description: 'Start date (ISO, e.g. 2025-01-01). Defaults to 90 days ago.'
+        required: false
+      end:
+        description: 'End date (ISO, e.g. 2025-03-31). Defaults to today.'
+        required: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ingestion pipeline
+        env:
+          MBTA_API_KEY: ${{ secrets.MBTA_API_KEY }}
+          TICKETMASTER_API_KEY: ${{ secrets.TICKETMASTER_API_KEY }}
+          EVENTBRITE_API_KEY: ${{ secrets.EVENTBRITE_API_KEY }}
+        run: |
+          if [ -n "${{ github.event.inputs.start }}" ]; then
+            python -m src.ingestion.run \
+              --city boston \
+              --start "${{ github.event.inputs.start }}" \
+              --end "${{ github.event.inputs.end }}"
+          else
+            python -m src.ingestion.run --city boston
+          fi
+
+      - name: Upload data artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: boston-data-${{ github.run_id }}
+          path: data/boston/
+          # Keep 30 days of runs so you can compare snapshots over time
+          retention-days: 30

@@ -34,16 +34,19 @@ def fetch_ridership(
     start: str,
     end: str,
     timezone: str,
-    live: bool = False,
+    live: bool | None = None,
 ) -> pd.DataFrame:
     """Return transit flow as ``timestamp``, ``route``, ``value``.
 
-    In sample mode (default) this reads a bundled CSV so the rest of the
-    pipeline is exercisable offline. In live mode it falls back to a snapshot of
-    current vehicle counts (see ``fetch_live_vehicle_counts``), which is the
-    real-time proxy available without historical-data downloads.
+    When live is None (default), auto-detects based on whether MBTA_API_KEY
+    is set in the environment. Pass live=False to force sample data even with
+    a key present (useful for testing).
     """
+    if live is None:
+        live = bool(os.environ.get("MBTA_API_KEY"))
+
     if not live:
+        print("[mbta] Using sample data (set MBTA_API_KEY to enable live mode).")
         return _load_sample(start, end, timezone)
 
     # Live mode: snapshot current vehicle activity per route. This is a true
