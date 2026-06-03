@@ -11,3 +11,6 @@ statsmodels>=0.14
 
 # Dashboard
 streamlit>=1.30
+
+# Local secret management
+python-dotenv>=1.0
