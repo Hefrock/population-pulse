@@ -75,6 +75,13 @@ jobs:
           cp data/boston/*.parquet "$SNAP/" 2>/dev/null \
             || { echo "No Parquet files generated — skipping data branch push"; exit 0; }
 
+          git fetch origin
+
+          # Remove parquet files so checkout isn't blocked: they are untracked
+          # on main (gitignored) but tracked on the data branch, and git refuses
+          # to overwrite untracked files during branch switch. Already safe in $SNAP.
+          rm -f data/boston/*.parquet
+
           # Switch to (or create) the data branch.
           # Use -B + explicit start point to avoid ambiguity with the local
           # data/ directory, which causes bare `git checkout data` to fail.
