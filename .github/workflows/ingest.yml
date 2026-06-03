@@ -75,9 +75,11 @@ jobs:
           cp data/boston/*.parquet "$SNAP/" 2>/dev/null \
             || { echo "No Parquet files generated — skipping data branch push"; exit 0; }
 
-          # Switch to (or create) the data branch
+          # Switch to (or create) the data branch.
+          # Use -B + explicit start point to avoid ambiguity with the local
+          # data/ directory, which causes bare `git checkout data` to fail.
           if git ls-remote --exit-code --heads origin data; then
-            git checkout data
+            git checkout -B data origin/data
           else
             git checkout --orphan data
             git rm -rf . --quiet 2>/dev/null || true
@@ -93,5 +95,5 @@ jobs:
             echo "Data unchanged — nothing to push"
           else
             git commit -m "chore: update ingested data $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
-            git push origin data
+            git push origin HEAD:data
           fi
