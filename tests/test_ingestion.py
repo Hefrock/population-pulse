@@ -10,7 +10,7 @@ import pytest
 from src.ingestion.cdc_fluview import _date_to_epiweek, _epiweek_to_timestamp
 from src.ingestion.ticketmaster import _empty_frame as tm_empty
 from src.ingestion.civic_events import _empty_frame as ce_empty
-from src.ingestion import mbta
+from src.ingestion import mbta, academic_calendar
 
 
 # --- CDC FluView epiweek helpers -------------------------------------------
@@ -336,3 +336,77 @@ def test_fetch_ridership_falls_back_to_sample_when_historical_fails(monkeypatch,
     )
     assert not df.empty
     assert list(df.columns) == ["timestamp", "route", "value"]
+
+
+# --- Academic-calendar population-driver ------------------------------------
+
+def _write_calendar_csv(path, school="Test U", enrollment=1000,
+                        start_date="2025-09-01", end_date="2025-12-01"):
+    pd.DataFrame({
+        "school": [school],
+        "enrollment": [enrollment],
+        "term": ["Fall 2025"],
+        "start_date": [start_date],
+        "end_date": [end_date],
+    }).to_csv(path, index=False)
+
+
+def test_academic_calendar_missing_file_returns_empty(tmp_path):
+    df = academic_calendar.fetch_population_index(
+        path=tmp_path / "nope.csv",
+        start="2025-09-01", end="2025-09-30",
+        timezone="America/New_York",
+    )
+    assert list(df.columns) == ["timestamp", "school", "value"]
+    assert df.empty
+
+
+def test_academic_calendar_full_weight_mid_term(tmp_path):
+    """Mid-term, the in-session weight is 1.0 -> value equals enrollment."""
+    csv = tmp_path / "calendar.csv"
+    _write_calendar_csv(csv, enrollment=1000, start_date="2025-09-01", end_date="2025-12-01")
+
+    df = academic_calendar.fetch_population_index(
+        path=csv, start="2025-09-15", end="2025-09-15",
+        timezone="America/New_York", ramp_days=7,
+    )
+    assert len(df) == 1
+    assert df["value"].iloc[0] == 1000.0
+
+
+def test_academic_calendar_ramps_up_before_term_start(tmp_path):
+    """A few days before move-in, the weight is a partial ramp, not 0 or 1."""
+    csv = tmp_path / "calendar.csv"
+    _write_calendar_csv(csv, enrollment=1000, start_date="2025-09-08", end_date="2025-12-01")
+
+    df = academic_calendar.fetch_population_index(
+        path=csv, start="2025-09-04", end="2025-09-04",  # 4 days before start, within the 7-day ramp
+        timezone="America/New_York", ramp_days=7,
+    )
+    assert len(df) == 1
+    assert 0 < df["value"].iloc[0] < 1000.0
+
+
+def test_academic_calendar_silent_outside_term_and_ramp(tmp_path):
+    """Far outside any term (and its ramp window), the school emits no row."""
+    csv = tmp_path / "calendar.csv"
+    _write_calendar_csv(csv, enrollment=1000, start_date="2025-09-01", end_date="2025-12-01")
+
+    df = academic_calendar.fetch_population_index(
+        path=csv, start="2025-07-01", end="2025-07-01",
+        timezone="America/New_York", ramp_days=7,
+    )
+    assert df.empty
+
+
+def test_academic_calendar_sums_schools_via_align():
+    """align() sums per-school rows into one composite index, like MBTA routes."""
+    from src.analysis.correlate import align
+
+    df = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2025-09-15", "2025-09-15"]).tz_localize("UTC"),
+        "school": ["A", "B"],
+        "value": [1000.0, 2000.0],
+    })
+    aligned = align({"academic_calendar": df}, resolution="W")
+    assert aligned["academic_calendar"].sum() == 3000.0

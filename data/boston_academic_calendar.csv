@@ -1,0 +1,33 @@
+school,enrollment,term,start_date,end_date
+Boston University,34000,Fall 2024,2024-09-03,2024-12-17
+Boston University,34000,Spring 2025,2025-01-21,2025-05-09
+Boston University,34000,Fall 2025,2025-09-02,2025-12-16
+Boston University,34000,Spring 2026,2026-01-20,2026-05-08
+Northeastern University,30000,Fall 2024,2024-09-04,2024-12-13
+Northeastern University,30000,Spring 2025,2025-01-06,2025-04-18
+Northeastern University,30000,Fall 2025,2025-09-03,2025-12-12
+Northeastern University,30000,Spring 2026,2026-01-05,2026-04-17
+Harvard University,25000,Fall 2024,2024-09-03,2024-12-17
+Harvard University,25000,Spring 2025,2025-01-21,2025-05-09
+Harvard University,25000,Fall 2025,2025-09-02,2025-12-16
+Harvard University,25000,Spring 2026,2026-01-20,2026-05-08
+Boston College,15000,Fall 2024,2024-09-03,2024-12-17
+Boston College,15000,Spring 2025,2025-01-21,2025-05-09
+Boston College,15000,Fall 2025,2025-09-02,2025-12-16
+Boston College,15000,Spring 2026,2026-01-20,2026-05-08
+UMass Boston,14000,Fall 2024,2024-09-03,2024-12-17
+UMass Boston,14000,Spring 2025,2025-01-21,2025-05-09
+UMass Boston,14000,Fall 2025,2025-09-02,2025-12-16
+UMass Boston,14000,Spring 2026,2026-01-20,2026-05-08
+Tufts University,12500,Fall 2024,2024-09-03,2024-12-17
+Tufts University,12500,Spring 2025,2025-01-21,2025-05-09
+Tufts University,12500,Fall 2025,2025-09-02,2025-12-16
+Tufts University,12500,Spring 2026,2026-01-20,2026-05-08
+MIT,11500,Fall 2024,2024-09-03,2024-12-17
+MIT,11500,Spring 2025,2025-01-21,2025-05-09
+MIT,11500,Fall 2025,2025-09-02,2025-12-16
+MIT,11500,Spring 2026,2026-01-20,2026-05-08
+Suffolk University,9000,Fall 2024,2024-09-03,2024-12-17
+Suffolk University,9000,Spring 2025,2025-01-21,2025-05-09
+Suffolk University,9000,Fall 2025,2025-09-02,2025-12-16
+Suffolk University,9000,Spring 2026,2026-01-20,2026-05-08

@@ -66,6 +66,11 @@ class CityDataProvider(ABC):
         """Large gatherings. Columns: ``timestamp``, ``venue``, ``name``,
         ``expected_attendance`` (nullable)."""
 
+    @abstractmethod
+    def fetch_academic_calendar(self, start: str, end: str) -> pd.DataFrame:
+        """Student population in the city. Columns: ``timestamp``, ``school``,
+        ``value`` (estimated students physically present that day)."""
+
     # --- hospital-demand signal (dependent variable) ------------------------
 
     @abstractmethod

@@ -93,6 +93,20 @@ events:
     - Boston Convention and Exhibition Center
     - Gillette Stadium   # outside the core but draws regional flow
 
+academic_calendar:
+  # Boston's population swells by ~150K students each fall/spring semester —
+  # a population-flow driver with a textbook link to respiratory illness
+  # ("school back in session -> ILI ticks up a couple weeks later"). There is
+  # no API for term dates (schools publish PDFs/HTML that change yearly), so
+  # this is a hand-curated reference CSV — refresh it ~once a year by copying
+  # each school's start/end dates from its registrar calendar page.
+  manual_csv:
+    path: data/boston_academic_calendar.csv
+  # Days to linearly ramp the "in session" weight up at move-in and down at
+  # move-out, instead of stepping abruptly — smooths the population transition
+  # the way it actually happens.
+  ramp_days: 7
+
 # --- Hospital-demand signal (the dependent variable) ------------------------
 
 hospital_demand:

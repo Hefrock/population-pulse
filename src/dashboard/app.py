@@ -35,7 +35,7 @@ DATA_BRANCH_BASE = os.environ.get(
     "https://raw.githubusercontent.com/hefrock/population-pulse/data",
 )
 
-SIGNALS = ["transit", "weather", "events", "hospital_demand"]
+SIGNALS = ["transit", "weather", "events", "academic_calendar", "hospital_demand"]
 
 st.set_page_config(page_title="population-pulse", layout="wide")
 

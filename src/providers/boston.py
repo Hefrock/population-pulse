@@ -10,7 +10,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.providers.base import CityDataProvider
-from src.ingestion import mbta, weather, events, hospital, ticketmaster, civic_events
+from src.ingestion import mbta, weather, events, hospital, ticketmaster, civic_events, academic_calendar
 
 
 class BostonProvider(CityDataProvider):
@@ -110,4 +110,14 @@ class BostonProvider(CityDataProvider):
             end=end,
             timezone=self.timezone,
             state=cfg.get("state", "Massachusetts"),
+        )
+
+    def fetch_academic_calendar(self, start: str, end: str) -> pd.DataFrame:
+        cfg = self.config["academic_calendar"]
+        return academic_calendar.fetch_population_index(
+            path=cfg["manual_csv"]["path"],
+            start=start,
+            end=end,
+            timezone=self.timezone,
+            ramp_days=cfg.get("ramp_days", academic_calendar.RAMP_DAYS),
         )
