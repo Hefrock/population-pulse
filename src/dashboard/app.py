@@ -35,7 +35,7 @@ DATA_BRANCH_BASE = os.environ.get(
     "https://raw.githubusercontent.com/hefrock/population-pulse/data",
 )
 
-SIGNALS = ["transit", "weather", "events", "academic_calendar", "hospital_demand"]
+SIGNALS = ["transit", "weather", "events", "academic_calendar", "wastewater", "hospital_demand"]
 
 st.set_page_config(page_title="population-pulse", layout="wide")
 
@@ -149,6 +149,15 @@ def main() -> None:
     if not hd.empty and "metric" in hd.columns:
         primary = hd[hd["metric"] == "ili_patients"]
         numeric_signals["hospital_demand"] = primary if not primary.empty else hd
+
+    # Wastewater is long-form (one row per pathogen). Split each pathogen into
+    # its own series so they correlate independently — summing different viral
+    # scales (RNA copies vs. normalized activity levels) into one number via
+    # align() would be meaningless.
+    ww = numeric_signals.pop("wastewater", pd.DataFrame())
+    if not ww.empty and "pathogen" in ww.columns:
+        for pathogen, grp in ww.groupby("pathogen"):
+            numeric_signals[f"wastewater: {pathogen}"] = grp
 
     aligned = align(numeric_signals, resolution="W")
     if aligned.empty:

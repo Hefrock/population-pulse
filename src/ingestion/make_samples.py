@@ -59,6 +59,43 @@ def make_hospital() -> None:
     pd.DataFrame(rows).to_csv(SAMPLES / "hospital_demand_sample.csv", index=False)
 
 
+def make_wastewater() -> None:
+    """Weekly multi-pathogen wastewater levels that LEAD the hospital surge.
+
+    Wastewater is a leading indicator, so each pathogen's surge is planted a
+    couple of weeks *earlier* than the hospital winter peak (day-of-year ~15).
+    That lets the lagged cross-correlation recover a positive lead lag — the
+    whole point of including this signal. Each virus also gets its own seasonal
+    shape: RSV peaks earliest (late fall), flu sharpest mid-winter, SARS-CoV-2
+    broad winter plus a smaller summer bump.
+    """
+    weeks = pd.date_range("2024-06-01", "2025-05-31", freq="W")
+    # Shapes keyed by (winter-peak day-of-year, width, summer-bump amplitude).
+    shapes = {
+        "SARS-CoV-2": (1, 45, 0.5),   # broad, leads hospital peak; summer wave
+        "Influenza A": (1, 25, 0.0),  # sharp mid-winter, no summer activity
+        "RSV": (-20, 30, 0.0),        # peaks earliest, late fall / early winter
+    }
+    rows = []
+    for pathogen, (peak_doy, width, summer) in shapes.items():
+        for w in weeks:
+            doy = w.dayofyear
+            # Winter peak (with December wrap-around), planted ahead of hospital.
+            level = 2.0 + 6.0 * np.exp(-((doy - peak_doy) ** 2) / (2 * width ** 2))
+            level += 6.0 * np.exp(-((doy - (365 + peak_doy)) ** 2) / (2 * width ** 2))
+            if summer:
+                level += summer * 6.0 * np.exp(-((doy - 200) ** 2) / (2 * 30 ** 2))
+            rows.append(
+                {
+                    "timestamp": w,
+                    "pathogen": pathogen,
+                    "value": round(level * RNG.normal(1.0, 0.05), 2),
+                    "source": "sample",
+                }
+            )
+    pd.DataFrame(rows).to_csv(SAMPLES / "wastewater_sample.csv", index=False)
+
+
 def make_events() -> None:
     """A handful of clean, datable large gatherings."""
     rows = [
@@ -74,6 +111,7 @@ def main() -> None:
     Path("data").mkdir(exist_ok=True)
     make_transit()
     make_hospital()
+    make_wastewater()
     make_events()
     print("Wrote sample data to data/samples/ and data/boston_events.csv")
     print("NOTE: this is SYNTHETIC data for testing the pipeline, not real observations.")

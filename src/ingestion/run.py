@@ -35,6 +35,7 @@ def run(city: str, start: str, end: str) -> None:
         "weather": provider.fetch_weather,
         "events": provider.fetch_events,
         "academic_calendar": provider.fetch_academic_calendar,
+        "wastewater": provider.fetch_wastewater,
         "hospital_demand": provider.fetch_hospital_demand,
     }
 

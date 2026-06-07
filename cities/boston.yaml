@@ -107,6 +107,37 @@ academic_calendar:
   # the way it actually happens.
   ramp_days: 7
 
+wastewater:
+  # Wastewater viral surveillance — the strongest LEADING indicator for the
+  # "disease" sub-hypothesis. Virus shed in stool appears in sewage ~4–10 days
+  # before the matching clinical/hospital surge, so we expect a positive lead
+  # lag against hospital demand. Multi-pathogen: SARS-CoV-2 (metro-Boston via
+  # MWRA), plus Influenza A and RSV (Massachusetts via CDC NWSS).
+  provider: mwra_cdc_nwss
+  pathogens:
+    - SARS-CoV-2
+    - Influenza A
+    - RSV
+
+  # Primary (SARS-CoV-2 only): MWRA Deer Island, analyzed by Biobot — the
+  # metro-Boston gold standard (~2.3M-person sewershed). MWRA's public feed is
+  # COVID-only; flu/RSV for the metro area flow through WastewaterSCAN instead,
+  # which has no stable open API, so those come from CDC NWSS below. The exact
+  # machine-readable URL has moved over time — set data_url to the current CSV
+  # export; the fetcher auto-discovers the date/concentration columns and
+  # degrades to CDC NWSS if it can't read it.
+  mwra:
+    base_url: https://www.mwra.com/biobot/biobotdata.htm
+    # data_url: http://ftp.mwra.com/biobot/<current-export>.csv   # set in production
+
+  # Fallback / multi-pathogen: CDC National Wastewater Surveillance System
+  # "Wastewater Viral Activity Level" (SARS-CoV-2, Influenza A, RSV). Socrata
+  # API, no key. Statewide Massachusetts values; the fetcher filters by state
+  # and auto-discovers the date/pathogen/value fields (long or wide layout).
+  cdc_nwss:
+    base_url: https://data.cdc.gov/resource/atcp-73re.json
+    state: Massachusetts
+
 # --- Hospital-demand signal (the dependent variable) ------------------------
 
 hospital_demand:

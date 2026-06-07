@@ -10,7 +10,10 @@ from __future__ import annotations
 import pandas as pd
 
 from src.providers.base import CityDataProvider
-from src.ingestion import mbta, weather, events, hospital, ticketmaster, civic_events, academic_calendar
+from src.ingestion import (
+    mbta, weather, events, hospital, ticketmaster, civic_events,
+    academic_calendar, wastewater,
+)
 
 
 class BostonProvider(CityDataProvider):
@@ -120,4 +123,15 @@ class BostonProvider(CityDataProvider):
             end=end,
             timezone=self.timezone,
             ramp_days=cfg.get("ramp_days", academic_calendar.RAMP_DAYS),
+        )
+
+    def fetch_wastewater(self, start: str, end: str) -> pd.DataFrame:
+        cfg = self.config["wastewater"]
+        return wastewater.fetch_wastewater(
+            pathogens=cfg["pathogens"],
+            start=start,
+            end=end,
+            timezone=self.timezone,
+            mwra=cfg.get("mwra"),
+            cdc_nwss=cfg.get("cdc_nwss"),
         )
