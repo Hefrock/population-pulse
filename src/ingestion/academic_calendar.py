@@ -11,9 +11,21 @@ There is no API for term dates: schools publish them as PDFs or HTML pages
 that change layout every year, so scraping them would be the most fragile
 fetcher in the pipeline. Instead this is a hand-curated reference CSV
 (``data/boston_academic_calendar.csv``, columns: school, enrollment, term,
-start_date, end_date) — the same "manual baseline" pattern already used for
-``boston_events.csv``. It needs a ~10-minute refresh once a year when each
-school publishes its next academic calendar.
+start_date, end_date, source) — the same "manual baseline" pattern already
+used for ``boston_events.csv``. It needs a ~10-minute refresh once a year when
+each school publishes its next academic calendar.
+
+Date conventions, so the curated rows stay consistent:
+  * ``start_date`` = first day of classes (move-in is a few days earlier; the
+    ramp below absorbs that).
+  * ``end_date``   = last day of final exams — the day students actually leave,
+    which is the right edge for a "students in the city" signal (not the last
+    day of *classes*, which is up to a week earlier).
+The ``source`` column records provenance: ``verified-YYYY-MM`` means the dates
+were cross-checked against the school's official registrar calendar; ``estimate``
+means they follow the school's usual pattern but couldn't be confirmed; and
+``prior-year-pattern`` marks historical terms reconstructed from typical timing.
+The fetcher ignores this column — it's purely a curation aid.
 
 For each school+term we build a daily 0..1 "in session" weight that ramps
 linearly over RAMP_DAYS at move-in and move-out, rather than stepping
