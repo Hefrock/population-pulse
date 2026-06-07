@@ -119,6 +119,12 @@ def lagged_cross_correlation(
                 pd.Series(d.values[:-lag]).corr(pd.Series(r.values[lag:]))
             ))
 
+    nan_lags = [lags[i] for i, c in enumerate(corrs) if np.isnan(c)]
+    if nan_lags:
+        print(
+            f"[correlate] NaN at lag(s) {nan_lags} — likely deseasonalization "
+            "boundary effect. Treating as 0 for best-lag selection."
+        )
     corrs_clean = [c if not np.isnan(c) else 0.0 for c in corrs]
     best_idx = int(np.argmax(np.abs(corrs_clean)))
     return CrossCorrResult(

@@ -161,6 +161,12 @@ def main() -> None:
     # signal dominate the chart. Correlation below uses the raw aligned frame.
     std = aligned.std()
     mean = aligned.mean()
+    flat_signals = std[std == 0].index.tolist()
+    if flat_signals:
+        st.warning(
+            f"Signal(s) {flat_signals} have zero variance in this date range "
+            "and will appear as a flat line."
+        )
     aligned_display = (aligned - mean) / std.replace(0, 1)
     st.line_chart(aligned_display)
     st.caption(

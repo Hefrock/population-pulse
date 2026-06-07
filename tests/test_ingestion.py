@@ -9,7 +9,7 @@ import pytest
 
 from src.ingestion.cdc_fluview import _date_to_epiweek, _epiweek_to_timestamp
 from src.ingestion.ticketmaster import _empty_frame as tm_empty
-from src.ingestion.eventbrite import _empty_frame as eb_empty
+from src.ingestion.civic_events import _empty_frame as ce_empty
 from src.ingestion import mbta
 
 
@@ -80,8 +80,8 @@ def test_ticketmaster_empty_frame_schema():
     assert len(df) == 0
 
 
-def test_eventbrite_empty_frame_schema():
-    df = eb_empty()
+def test_civic_events_empty_frame_schema():
+    df = ce_empty()
     assert list(df.columns) == ["timestamp", "venue", "name", "expected_attendance", "source"]
     assert len(df) == 0
 
@@ -99,16 +99,29 @@ def test_ticketmaster_no_key_returns_empty(monkeypatch):
     assert df.empty
 
 
-def test_eventbrite_no_key_returns_empty(monkeypatch):
-    monkeypatch.delenv("EVENTBRITE_API_KEY", raising=False)
-    from src.ingestion.eventbrite import fetch_events
-    df = fetch_events(
-        base_url="https://www.eventbriteapi.com/v3",
-        location="Boston, MA, USA", radius="25mi",
-        start="2025-01-01", end="2025-03-31",
+def test_civic_events_network_error_returns_empty(monkeypatch):
+    """A network error from Boston.gov returns empty, not an exception."""
+    import requests as req
+    from src.ingestion import civic_events
+
+    monkeypatch.setattr(
+        civic_events.requests, "get",
+        lambda *a, **k: (_ for _ in ()).throw(req.ConnectionError("no route to host")),
+    )
+    df = civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
         timezone="America/New_York",
     )
     assert df.empty
+
+
+def test_epiweek_dst_fall_back_does_not_crash():
+    """_epiweek_to_timestamp must not raise for the ambiguous DST fall-back week."""
+    ew = _date_to_epiweek(datetime.date(2025, 11, 2))  # clocks fall back this week
+    ts = _epiweek_to_timestamp(ew, "America/New_York")
+    assert ts is not pd.NaT
+    assert ts.tzinfo is not None
 
 
 # --- Boston.gov civic events ------------------------------------------------
