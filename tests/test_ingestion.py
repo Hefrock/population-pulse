@@ -10,7 +10,7 @@ import pytest
 from src.ingestion.cdc_fluview import _date_to_epiweek, _epiweek_to_timestamp
 from src.ingestion.ticketmaster import _empty_frame as tm_empty
 from src.ingestion.civic_events import _empty_frame as ce_empty
-from src.ingestion import mbta
+from src.ingestion import mbta, academic_calendar
 
 
 # --- CDC FluView epiweek helpers -------------------------------------------
@@ -336,3 +336,195 @@ def test_fetch_ridership_falls_back_to_sample_when_historical_fails(monkeypatch,
     )
     assert not df.empty
     assert list(df.columns) == ["timestamp", "route", "value"]
+
+
+# --- Academic-calendar population-driver ------------------------------------
+
+def _write_calendar_csv(path, school="Test U", enrollment=1000,
+                        start_date="2025-09-01", end_date="2025-12-01"):
+    pd.DataFrame({
+        "school": [school],
+        "enrollment": [enrollment],
+        "term": ["Fall 2025"],
+        "start_date": [start_date],
+        "end_date": [end_date],
+    }).to_csv(path, index=False)
+
+
+def test_academic_calendar_missing_file_returns_empty(tmp_path):
+    df = academic_calendar.fetch_population_index(
+        path=tmp_path / "nope.csv",
+        start="2025-09-01", end="2025-09-30",
+        timezone="America/New_York",
+    )
+    assert list(df.columns) == ["timestamp", "school", "value"]
+    assert df.empty
+
+
+def test_academic_calendar_full_weight_mid_term(tmp_path):
+    """Mid-term, the in-session weight is 1.0 -> value equals enrollment."""
+    csv = tmp_path / "calendar.csv"
+    _write_calendar_csv(csv, enrollment=1000, start_date="2025-09-01", end_date="2025-12-01")
+
+    df = academic_calendar.fetch_population_index(
+        path=csv, start="2025-09-15", end="2025-09-15",
+        timezone="America/New_York", ramp_days=7,
+    )
+    assert len(df) == 1
+    assert df["value"].iloc[0] == 1000.0
+
+
+def test_academic_calendar_ramps_up_before_term_start(tmp_path):
+    """A few days before move-in, the weight is a partial ramp, not 0 or 1."""
+    csv = tmp_path / "calendar.csv"
+    _write_calendar_csv(csv, enrollment=1000, start_date="2025-09-08", end_date="2025-12-01")
+
+    df = academic_calendar.fetch_population_index(
+        path=csv, start="2025-09-04", end="2025-09-04",  # 4 days before start, within the 7-day ramp
+        timezone="America/New_York", ramp_days=7,
+    )
+    assert len(df) == 1
+    assert 0 < df["value"].iloc[0] < 1000.0
+
+
+def test_academic_calendar_silent_outside_term_and_ramp(tmp_path):
+    """Far outside any term (and its ramp window), the school emits no row."""
+    csv = tmp_path / "calendar.csv"
+    _write_calendar_csv(csv, enrollment=1000, start_date="2025-09-01", end_date="2025-12-01")
+
+    df = academic_calendar.fetch_population_index(
+        path=csv, start="2025-07-01", end="2025-07-01",
+        timezone="America/New_York", ramp_days=7,
+    )
+    assert df.empty
+
+
+def test_academic_calendar_sums_schools_via_align():
+    """align() sums per-school rows into one composite index, like MBTA routes."""
+    from src.analysis.correlate import align
+
+    df = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2025-09-15", "2025-09-15"]).tz_localize("UTC"),
+        "school": ["A", "B"],
+        "value": [1000.0, 2000.0],
+    })
+    aligned = align({"academic_calendar": df}, resolution="W")
+    assert aligned["academic_calendar"].sum() == 3000.0
+
+
+# --- Wastewater viral surveillance ------------------------------------------
+
+from src.ingestion import wastewater
+
+
+def test_wastewater_canonical_pathogen_maps_aliases():
+    assert wastewater._canonical_pathogen("SARS-CoV-2") == "SARS-CoV-2"
+    assert wastewater._canonical_pathogen("sars cov 2 wastewater") == "SARS-CoV-2"
+    # "influenza a" must win over the shorter "influenza" alias.
+    assert wastewater._canonical_pathogen("Influenza A virus") == "Influenza A"
+    assert wastewater._canonical_pathogen("RSV activity") == "RSV"
+    assert wastewater._canonical_pathogen("norovirus") is None
+
+
+def test_wastewater_sample_has_all_pathogens():
+    df = wastewater._load_sample(
+        ["SARS-CoV-2", "Influenza A", "RSV"],
+        start="2024-06-01", end="2025-05-31", timezone="America/New_York",
+    )
+    assert list(df.columns) == ["timestamp", "pathogen", "value", "source"]
+    assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A", "RSV"}
+    assert df["timestamp"].dt.tz is not None
+
+
+def test_wastewater_sample_filters_to_requested_pathogens():
+    df = wastewater._load_sample(
+        ["RSV"], start="2024-06-01", end="2025-05-31", timezone="America/New_York",
+    )
+    assert set(df["pathogen"].unique()) == {"RSV"}
+
+
+def test_parse_cdc_nwss_long_form():
+    records = [
+        {"week_end_date": "2025-01-04", "state": "Massachusetts",
+         "pathogen": "SARS-CoV-2", "wval": "7.5"},
+        {"week_end_date": "2025-01-04", "state": "Massachusetts",
+         "pathogen": "Influenza A", "wval": "3.2"},
+        {"week_end_date": "2025-01-04", "state": "California",
+         "pathogen": "RSV", "wval": "9.9"},  # wrong state, dropped
+    ]
+    df = wastewater._parse_cdc_nwss(
+        records, ["SARS-CoV-2", "Influenza A", "RSV"], "Massachusetts",
+        start="2024-06-01", end="2025-12-31", timezone="America/New_York",
+    )
+    assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A"}
+    assert (df["source"] == "cdc_nwss").all()
+    assert df.loc[df["pathogen"] == "SARS-CoV-2", "value"].iloc[0] == 7.5
+
+
+def test_parse_cdc_nwss_wide_form():
+    records = [
+        {"date": "2025-01-04", "state": "MA",
+         "sars_cov_2": "7.5", "influenza_a": "3.2", "rsv": "1.1"},
+    ]
+    df = wastewater._parse_cdc_nwss(
+        records, ["SARS-CoV-2", "Influenza A", "RSV"], "Massachusetts",
+        start="2024-06-01", end="2025-12-31", timezone="America/New_York",
+    )
+    assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A", "RSV"}
+
+
+def test_parse_cdc_nwss_respects_date_window():
+    records = [
+        {"date": "2030-01-04", "state": "MA", "pathogen": "RSV", "wval": "5.0"},
+    ]
+    df = wastewater._parse_cdc_nwss(
+        records, ["RSV"], "Massachusetts",
+        start="2024-06-01", end="2025-12-31", timezone="America/New_York",
+    )
+    assert df.empty  # out-of-window row dropped
+
+
+def test_fetch_wastewater_falls_back_to_sample_when_sources_unreachable(monkeypatch):
+    """No mwra data_url and a CDC endpoint that errors -> bundled sample."""
+    def boom(*args, **kwargs):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(wastewater.requests, "get", boom)
+
+    df = wastewater.fetch_wastewater(
+        pathogens=["SARS-CoV-2", "Influenza A", "RSV"],
+        start="2024-06-01", end="2025-05-31", timezone="America/New_York",
+        mwra={"base_url": "https://example.invalid"},  # no data_url -> skipped
+        cdc_nwss={"base_url": "https://data.cdc.gov/resource/atcp-73re.json"},
+    )
+    assert not df.empty
+    assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A", "RSV"}
+    assert (df["source"] == "sample").all()
+
+
+def test_fetch_wastewater_prefers_mwra_for_sars(monkeypatch):
+    """MWRA supplies SARS-CoV-2; CDC fills only the remaining pathogens."""
+    mwra_df = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2025-01-01"]).tz_localize("America/New_York"),
+        "pathogen": ["SARS-CoV-2"], "value": [123.0], "source": ["mwra"],
+    })
+    monkeypatch.setattr(wastewater, "_fetch_mwra", lambda *a, **k: mwra_df)
+
+    captured = {}
+    def fake_cdc(cfg, pathogens, start, end, tz):
+        captured["pathogens"] = pathogens
+        return pd.DataFrame({
+            "timestamp": pd.to_datetime(["2025-01-01", "2025-01-01"]).tz_localize("America/New_York"),
+            "pathogen": ["Influenza A", "RSV"], "value": [3.0, 4.0],
+            "source": ["cdc_nwss", "cdc_nwss"],
+        })
+    monkeypatch.setattr(wastewater, "_fetch_cdc_nwss", fake_cdc)
+
+    df = wastewater.fetch_wastewater(
+        pathogens=["SARS-CoV-2", "Influenza A", "RSV"],
+        start="2024-06-01", end="2025-12-31", timezone="America/New_York",
+        mwra={"data_url": "x"}, cdc_nwss={"base_url": "y"},
+    )
+    # CDC was asked only for the pathogens MWRA didn't cover.
+    assert "SARS-CoV-2" not in captured["pathogens"]
+    assert df.loc[df["pathogen"] == "SARS-CoV-2", "source"].iloc[0] == "mwra"
+    assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A", "RSV"}

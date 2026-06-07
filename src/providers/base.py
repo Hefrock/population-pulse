@@ -66,6 +66,18 @@ class CityDataProvider(ABC):
         """Large gatherings. Columns: ``timestamp``, ``venue``, ``name``,
         ``expected_attendance`` (nullable)."""
 
+    @abstractmethod
+    def fetch_academic_calendar(self, start: str, end: str) -> pd.DataFrame:
+        """Student population in the city. Columns: ``timestamp``, ``school``,
+        ``value`` (estimated students physically present that day)."""
+
+    @abstractmethod
+    def fetch_wastewater(self, start: str, end: str) -> pd.DataFrame:
+        """Wastewater viral surveillance — a leading indicator of demand.
+
+        Columns: ``timestamp``, ``pathogen``, ``value``, ``source`` (long form,
+        one row per pathogen per sample period)."""
+
     # --- hospital-demand signal (dependent variable) ------------------------
 
     @abstractmethod

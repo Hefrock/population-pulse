@@ -1,0 +1,157 @@
+timestamp,pathogen,value,source
+2024-06-02,SARS-CoV-2,3.08,sample
+2024-06-09,SARS-CoV-2,2.97,sample
+2024-06-16,SARS-CoV-2,3.39,sample
+2024-06-23,SARS-CoV-2,4.17,sample
+2024-06-30,SARS-CoV-2,4.35,sample
+2024-07-07,SARS-CoV-2,5.12,sample
+2024-07-14,SARS-CoV-2,4.9,sample
+2024-07-21,SARS-CoV-2,4.51,sample
+2024-07-28,SARS-CoV-2,4.55,sample
+2024-08-04,SARS-CoV-2,3.95,sample
+2024-08-11,SARS-CoV-2,4.17,sample
+2024-08-18,SARS-CoV-2,3.79,sample
+2024-08-25,SARS-CoV-2,3.38,sample
+2024-09-01,SARS-CoV-2,3.3,sample
+2024-09-08,SARS-CoV-2,3.08,sample
+2024-09-15,SARS-CoV-2,2.77,sample
+2024-09-22,SARS-CoV-2,2.48,sample
+2024-09-29,SARS-CoV-2,2.95,sample
+2024-10-06,SARS-CoV-2,3.14,sample
+2024-10-13,SARS-CoV-2,3.38,sample
+2024-10-20,SARS-CoV-2,3.87,sample
+2024-10-27,SARS-CoV-2,3.88,sample
+2024-11-03,SARS-CoV-2,5.08,sample
+2024-11-10,SARS-CoV-2,4.91,sample
+2024-11-17,SARS-CoV-2,5.94,sample
+2024-11-24,SARS-CoV-2,5.75,sample
+2024-12-01,SARS-CoV-2,6.49,sample
+2024-12-08,SARS-CoV-2,7.82,sample
+2024-12-15,SARS-CoV-2,7.53,sample
+2024-12-22,SARS-CoV-2,8.21,sample
+2024-12-29,SARS-CoV-2,8.09,sample
+2025-01-05,SARS-CoV-2,7.93,sample
+2025-01-12,SARS-CoV-2,8.36,sample
+2025-01-19,SARS-CoV-2,7.45,sample
+2025-01-26,SARS-CoV-2,6.51,sample
+2025-02-02,SARS-CoV-2,6.39,sample
+2025-02-09,SARS-CoV-2,6.29,sample
+2025-02-16,SARS-CoV-2,5.67,sample
+2025-02-23,SARS-CoV-2,4.61,sample
+2025-03-02,SARS-CoV-2,4.3,sample
+2025-03-09,SARS-CoV-2,3.86,sample
+2025-03-16,SARS-CoV-2,3.49,sample
+2025-03-23,SARS-CoV-2,2.97,sample
+2025-03-30,SARS-CoV-2,2.8,sample
+2025-04-06,SARS-CoV-2,2.56,sample
+2025-04-13,SARS-CoV-2,2.57,sample
+2025-04-20,SARS-CoV-2,2.45,sample
+2025-04-27,SARS-CoV-2,2.27,sample
+2025-05-04,SARS-CoV-2,2.22,sample
+2025-05-11,SARS-CoV-2,2.32,sample
+2025-05-18,SARS-CoV-2,2.31,sample
+2025-05-25,SARS-CoV-2,2.45,sample
+2024-06-02,Influenza A,1.91,sample
+2024-06-09,Influenza A,1.94,sample
+2024-06-16,Influenza A,1.88,sample
+2024-06-23,Influenza A,2.02,sample
+2024-06-30,Influenza A,2.07,sample
+2024-07-07,Influenza A,1.84,sample
+2024-07-14,Influenza A,2.0,sample
+2024-07-21,Influenza A,1.98,sample
+2024-07-28,Influenza A,2.03,sample
+2024-08-04,Influenza A,2.0,sample
+2024-08-11,Influenza A,1.85,sample
+2024-08-18,Influenza A,1.87,sample
+2024-08-25,Influenza A,2.0,sample
+2024-09-01,Influenza A,2.1,sample
+2024-09-08,Influenza A,1.78,sample
+2024-09-15,Influenza A,2.04,sample
+2024-09-22,Influenza A,2.12,sample
+2024-09-29,Influenza A,1.99,sample
+2024-10-06,Influenza A,2.07,sample
+2024-10-13,Influenza A,1.97,sample
+2024-10-20,Influenza A,2.08,sample
+2024-10-27,Influenza A,2.03,sample
+2024-11-03,Influenza A,2.12,sample
+2024-11-10,Influenza A,2.88,sample
+2024-11-17,Influenza A,3.11,sample
+2024-11-24,Influenza A,3.92,sample
+2024-12-01,Influenza A,4.58,sample
+2024-12-08,Influenza A,5.51,sample
+2024-12-15,Influenza A,6.83,sample
+2024-12-22,Influenza A,7.35,sample
+2024-12-29,Influenza A,8.13,sample
+2025-01-05,Influenza A,8.1,sample
+2025-01-12,Influenza A,7.57,sample
+2025-01-19,Influenza A,6.71,sample
+2025-01-26,Influenza A,6.08,sample
+2025-02-02,Influenza A,4.4,sample
+2025-02-09,Influenza A,3.77,sample
+2025-02-16,Influenza A,3.28,sample
+2025-02-23,Influenza A,2.8,sample
+2025-03-02,Influenza A,2.17,sample
+2025-03-09,Influenza A,2.13,sample
+2025-03-16,Influenza A,2.22,sample
+2025-03-23,Influenza A,2.08,sample
+2025-03-30,Influenza A,2.03,sample
+2025-04-06,Influenza A,1.98,sample
+2025-04-13,Influenza A,1.96,sample
+2025-04-20,Influenza A,2.03,sample
+2025-04-27,Influenza A,1.97,sample
+2025-05-04,Influenza A,2.0,sample
+2025-05-11,Influenza A,2.01,sample
+2025-05-18,Influenza A,1.93,sample
+2025-05-25,Influenza A,2.05,sample
+2024-06-02,RSV,2.29,sample
+2024-06-09,RSV,1.82,sample
+2024-06-16,RSV,2.03,sample
+2024-06-23,RSV,1.92,sample
+2024-06-30,RSV,2.06,sample
+2024-07-07,RSV,2.0,sample
+2024-07-14,RSV,2.08,sample
+2024-07-21,RSV,2.12,sample
+2024-07-28,RSV,2.02,sample
+2024-08-04,RSV,2.11,sample
+2024-08-11,RSV,1.77,sample
+2024-08-18,RSV,2.16,sample
+2024-08-25,RSV,2.05,sample
+2024-09-01,RSV,2.13,sample
+2024-09-08,RSV,1.92,sample
+2024-09-15,RSV,2.01,sample
+2024-09-22,RSV,2.2,sample
+2024-09-29,RSV,2.33,sample
+2024-10-06,RSV,2.61,sample
+2024-10-13,RSV,3.08,sample
+2024-10-20,RSV,3.11,sample
+2024-10-27,RSV,4.24,sample
+2024-11-03,RSV,4.81,sample
+2024-11-10,RSV,5.58,sample
+2024-11-17,RSV,6.0,sample
+2024-11-24,RSV,7.39,sample
+2024-12-01,RSV,6.8,sample
+2024-12-08,RSV,8.25,sample
+2024-12-15,RSV,7.33,sample
+2024-12-22,RSV,7.56,sample
+2024-12-29,RSV,6.87,sample
+2025-01-05,RSV,6.6,sample
+2025-01-12,RSV,5.35,sample
+2025-01-19,RSV,4.42,sample
+2025-01-26,RSV,3.75,sample
+2025-02-02,RSV,3.47,sample
+2025-02-09,RSV,2.89,sample
+2025-02-16,RSV,2.45,sample
+2025-02-23,RSV,2.26,sample
+2025-03-02,RSV,1.99,sample
+2025-03-09,RSV,2.12,sample
+2025-03-16,RSV,1.86,sample
+2025-03-23,RSV,2.09,sample
+2025-03-30,RSV,2.02,sample
+2025-04-06,RSV,2.24,sample
+2025-04-13,RSV,1.89,sample
+2025-04-20,RSV,1.99,sample
+2025-04-27,RSV,2.18,sample
+2025-05-04,RSV,2.12,sample
+2025-05-11,RSV,1.93,sample
+2025-05-18,RSV,2.02,sample
+2025-05-25,RSV,2.0,sample
