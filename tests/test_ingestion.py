@@ -416,6 +416,13 @@ def test_academic_calendar_sums_schools_via_align():
 
 from src.ingestion import wastewater
 
+# The bundled sample is generated relative to "today" (matching run.py's
+# default "trailing 365 days" ingestion window) — see make_samples._date_range.
+# A fixed calendar window here would drift out of range over time and silently
+# filter the sample to zero rows, exactly like the bug this mirrors.
+_WW_END = datetime.date.today().isoformat()
+_WW_START = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
+
 
 def test_wastewater_canonical_pathogen_maps_aliases():
     assert wastewater._canonical_pathogen("SARS-CoV-2") == "SARS-CoV-2"
@@ -429,7 +436,7 @@ def test_wastewater_canonical_pathogen_maps_aliases():
 def test_wastewater_sample_has_all_pathogens():
     df = wastewater._load_sample(
         ["SARS-CoV-2", "Influenza A", "RSV"],
-        start="2024-06-01", end="2025-05-31", timezone="America/New_York",
+        start=_WW_START, end=_WW_END, timezone="America/New_York",
     )
     assert list(df.columns) == ["timestamp", "pathogen", "value", "source"]
     assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A", "RSV"}
@@ -438,7 +445,7 @@ def test_wastewater_sample_has_all_pathogens():
 
 def test_wastewater_sample_filters_to_requested_pathogens():
     df = wastewater._load_sample(
-        ["RSV"], start="2024-06-01", end="2025-05-31", timezone="America/New_York",
+        ["RSV"], start=_WW_START, end=_WW_END, timezone="America/New_York",
     )
     assert set(df["pathogen"].unique()) == {"RSV"}
 
@@ -492,7 +499,7 @@ def test_fetch_wastewater_falls_back_to_sample_when_sources_unreachable(monkeypa
 
     df = wastewater.fetch_wastewater(
         pathogens=["SARS-CoV-2", "Influenza A", "RSV"],
-        start="2024-06-01", end="2025-05-31", timezone="America/New_York",
+        start=_WW_START, end=_WW_END, timezone="America/New_York",
         mwra={"base_url": "https://example.invalid"},  # no data_url -> skipped
         cdc_nwss={"base_url": "https://data.cdc.gov/resource/atcp-73re.json"},
     )
