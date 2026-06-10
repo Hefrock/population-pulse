@@ -6,10 +6,18 @@ asks the natural follow-up: with several drivers each contributing at its own
 lag, how much of the weekly demand level can they jointly explain — and which
 ones still matter once the others are accounted for?
 
-``hospital_demand`` is a weekly **count** (ILI patients), not a continuous
-measurement, so this fits a Poisson / Negative-Binomial GLM rather than OLS
-linear regression: counts are non-negative and typically over-dispersed
-(variance > mean), and plain linear regression mis-specifies both.
+``hospital_demand`` is a weekly **count** (ED visits / ILI patients), not a
+continuous measurement, so this fits a Poisson / Negative-Binomial GLM rather
+than OLS linear regression: counts are non-negative and typically
+over-dispersed (variance > mean), and plain linear regression mis-specifies
+both.
+
+A second framing — ``build_surge_labels`` / ``fit_logistic_regression`` —
+turns the count into a binary "is this week a surge *for the time of year*?"
+label and asks which lagged drivers predict it, reporting AUC-ROC. This
+trades the count model's information for an easier-to-communicate yes/no
+question, and is most useful for drivers (like wastewater) hypothesized as
+*leading* indicators.
 
 IMPORTANT CAVEATS (read before trusting a coefficient):
 - This is still descriptive/exploratory, not causal — same caveat as
@@ -31,6 +39,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
+from scipy.stats import rankdata
+
+from src.analysis.correlate import seasonal_residual
 
 _FAMILIES = {
     "poisson": sm.families.Poisson,
@@ -122,4 +133,111 @@ def fit_count_regression(
         aic=float(model.aic),
         pseudo_r_squared=float(pseudo_r2),
         fitted=model.fittedvalues,
+    )
+
+
+@dataclass
+class LogisticRegressionResult:
+    """Result of a multi-driver lagged "surge" logistic regression."""
+
+    n_obs: int
+    n_surge_weeks: int
+    coefficients: pd.Series        # one entry per driver, plus "const"
+    pvalues: pd.Series
+    aic: float
+    pseudo_r_squared: float         # McFadden's pseudo-R^2 vs. an intercept-only model
+    auc: float                       # AUC-ROC of in-sample fitted probabilities
+    surge_labels: pd.Series          # the binary labels the model was fit on
+    fitted_probabilities: pd.Series  # in-sample P(surge), indexed like the design matrix
+
+
+def build_surge_labels(response: pd.Series, quantile: float = 0.75, window: int | None = None) -> pd.Series:
+    """Binary "surge" label: is this week elevated *for the time of year*?
+
+    Hospital demand is strongly seasonal, so a label based on the raw level
+    (e.g. "top 25% of all weeks") would just relabel "is it winter" — not
+    useful as a target. Instead this deseasonalizes with
+    ``correlate.seasonal_residual`` (the same rolling-mean filter
+    ``lagged_cross_correlation`` uses) and labels the top ``1 - quantile``
+    fraction of *residuals* as a surge: weeks running hotter than that time of
+    year would predict, regardless of whether it's June or January.
+
+    ``quantile=0.75`` (the default) labels roughly a quarter of weeks as
+    surges — a reasonable balance for logistic regression with a modest
+    sample size.
+    """
+    residual = seasonal_residual(response, window=window)
+    threshold = residual.quantile(quantile)
+    return (residual > threshold).astype(int)
+
+
+def _roc_auc_score(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    """AUC-ROC via the rank-sum (Mann-Whitney U) identity — avoids a
+    scikit-learn dependency for one statistic."""
+    n_pos = int(np.sum(y_true == 1))
+    n_neg = int(np.sum(y_true == 0))
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    ranks = rankdata(y_score)
+    sum_ranks_pos = ranks[y_true == 1].sum()
+    return float((sum_ranks_pos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+
+
+def fit_logistic_regression(
+    aligned: pd.DataFrame,
+    response: str,
+    driver_lags: dict[str, int],
+    surge_quantile: float = 0.75,
+) -> LogisticRegressionResult:
+    """Fit a logistic regression of a "surge" label on lagged drivers.
+
+    The label is built by ``build_surge_labels`` from the *full* ``response``
+    series (so deseasonalization isn't distorted by truncating to the lagged
+    design matrix first), then aligned to whichever weeks survive lagging the
+    drivers — same convention as ``fit_count_regression``.
+
+    Same caveats as ``fit_count_regression`` apply (descriptive not causal,
+    easy to overfit with few weeks and many drivers, autocorrelated weekly
+    series). AUC-ROC here is an **in-sample** fit-quality measure, not a
+    validated predictive score — see the module docstring on walk-forward
+    validation before using this for prediction.
+    """
+    if response not in aligned.columns:
+        raise ValueError(f"{response!r} not in aligned columns: {list(aligned.columns)}")
+
+    surge = build_surge_labels(aligned[response], quantile=surge_quantile)
+    design = build_lagged_design_matrix(aligned, response, driver_lags)
+    min_obs = len(driver_lags) + 5
+    if len(design) < min_obs:
+        raise ValueError(
+            f"Only {len(design)} overlapping weeks after lagging "
+            f"{len(driver_lags)} driver(s) — need at least {min_obs}."
+        )
+
+    y = surge.loc[design.index]
+    if y.nunique() < 2:
+        raise ValueError(
+            "Surge label has only one class over the overlapping weeks — "
+            "try a different surge_quantile or a longer time range."
+        )
+
+    X = sm.add_constant(design.drop(columns=[response]).astype(float))
+    model = sm.Logit(y, X).fit(disp=0)
+
+    null_model = sm.Logit(y, np.ones((len(y), 1))).fit(disp=0)
+    pseudo_r2 = 1.0 - (model.llf / null_model.llf)
+
+    fitted = model.predict(X)
+    auc = _roc_auc_score(y.to_numpy(), fitted.to_numpy())
+
+    return LogisticRegressionResult(
+        n_obs=int(model.nobs),
+        n_surge_weeks=int(y.sum()),
+        coefficients=model.params,
+        pvalues=model.pvalues,
+        aic=float(model.aic),
+        pseudo_r_squared=float(pseudo_r2),
+        auc=auc,
+        surge_labels=y,
+        fitted_probabilities=fitted,
     )
