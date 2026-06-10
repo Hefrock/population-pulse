@@ -85,6 +85,12 @@ dates are sourced vs. inferred — preserve that honesty when editing. Note date
 mean: `start_date` = first day of classes, `end_date` = last day of final exams
 (when students depart).
 
+`data/ma_dph_respiratory.csv` (Tier 1 of `hospital.py`, statewide weekly ED
+visits + admissions for "broad acute respiratory" diagnoses, 2019–present) is
+also hand-maintained — regenerate it from a freshly downloaded MA DPH
+"Respiratory Disease Reporting" workbook with `scripts/build_ma_dph_csv.py`
+(see README). It's checked in like the other curated CSVs, not gitignored.
+
 ## Environment caveat (important)
 
 In the sandboxed/CI environment, **outbound network is restricted to an allowlist**
