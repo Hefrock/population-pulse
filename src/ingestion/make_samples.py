@@ -110,12 +110,52 @@ def make_wastewater() -> None:
     pd.DataFrame(rows).to_csv(SAMPLES / "wastewater_sample.csv", index=False)
 
 
+def make_weather() -> None:
+    """Hourly temperature/apparent-temperature/precipitation with planted
+    seasonal extremes — a winter cold snap and a summer heat spike — mirroring
+    the heat-stress / cold / asthma drivers in the weather sub-hypothesis.
+    """
+    days = _date_range()
+    hours = pd.date_range(days[0], days[-1] + pd.Timedelta(days=1), freq="h", inclusive="left")
+    rows = []
+    for h in hours:
+        doy = h.dayofyear
+        seasonal = 10 - 14 * np.cos(2 * np.pi * (doy - 15) / 365)
+        diurnal = 4 * np.sin(2 * np.pi * (h.hour - 9) / 24)
+        temp = seasonal + diurnal + RNG.normal(0, 1.5)
+        # Apparent temperature exaggerates extremes: wind chill below 5C,
+        # heat index above 25C.
+        if temp < 5:
+            apparent = temp - 3 + RNG.normal(0, 1.0)
+        elif temp > 25:
+            apparent = temp + 3 + RNG.normal(0, 1.0)
+        else:
+            apparent = temp + RNG.normal(0, 1.0)
+        precip = round(max(0.0, RNG.normal(0, 0.3)), 2) if RNG.random() < 0.12 else 0.0
+        rows.append(
+            {
+                "timestamp": h,
+                "temperature_2m": round(temp, 1),
+                "apparent_temperature": round(apparent, 1),
+                "precipitation": precip,
+            }
+        )
+    pd.DataFrame(rows).to_csv(SAMPLES / "weather_sample.csv", index=False)
+
+
 def make_events() -> None:
-    """A handful of clean, datable large gatherings."""
+    """A handful of clean, datable large gatherings.
+
+    Dates are fixed calendar dates for recognizable annual events (NBA season
+    opener, New Year's Eve, Patriots' Day marathon), picked for the *current*
+    instance of each so they fall inside run.py's trailing-365-day default
+    window. Like data/boston_academic_calendar.csv, this drifts out of range
+    over time and needs an annual refresh to the next instance of each event.
+    """
     rows = [
-        {"date": "2024-10-15", "venue": "TD Garden", "name": "Celtics Opener", "expected_attendance": 19000},
-        {"date": "2024-12-31", "venue": "Boston Common", "name": "First Night", "expected_attendance": 50000},
-        {"date": "2025-04-21", "venue": "Boston", "name": "Boston Marathon", "expected_attendance": 500000},
+        {"date": "2025-10-21", "venue": "TD Garden", "name": "Celtics Opener", "expected_attendance": 19000},
+        {"date": "2025-12-31", "venue": "Boston Common", "name": "First Night", "expected_attendance": 50000},
+        {"date": "2026-04-20", "venue": "Boston", "name": "Boston Marathon", "expected_attendance": 500000},
     ]
     pd.DataFrame(rows).to_csv(Path("data/boston_events.csv"), index=False)
 
@@ -124,6 +164,7 @@ def main() -> None:
     SAMPLES.mkdir(parents=True, exist_ok=True)
     Path("data").mkdir(exist_ok=True)
     make_transit()
+    make_weather()
     make_hospital()
     make_wastewater()
     make_events()

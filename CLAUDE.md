@@ -17,7 +17,7 @@ pip install -r requirements.txt              # deps
 python -m src.ingestion.make_samples          # regenerate synthetic sample data
 python -m src.ingestion.run --city boston     # full ingest (writes data/boston/*.parquet)
 streamlit run src/dashboard/app.py            # dashboard
-pytest tests/ -q                              # test suite (currently 38)
+pytest tests/ -q                              # test suite (currently 56)
 ```
 
 `run.py` accepts `--start`/`--end` (ISO dates); default is the trailing 365 days.
@@ -30,12 +30,13 @@ one provider subclass; nothing else changes. Don't put Boston-specific facts
 anywhere but `cities/boston.yaml` and `src/providers/boston.py`.
 
 ```
-cities/boston.yaml        # the single place Boston-specific facts live
-src/providers/base.py     # abstract CityDataProvider (one fetch_* per signal)
-src/providers/boston.py   # concrete Boston provider — delegates to ingestion/
-src/ingestion/*.py        # one fetcher per source; returns a tidy DataFrame
-src/analysis/correlate.py # align() + lagged_cross_correlation()
-src/dashboard/app.py      # Streamlit; reads Parquet, no API keys
+cities/boston.yaml         # the single place Boston-specific facts live
+src/providers/base.py      # abstract CityDataProvider (one fetch_* per signal)
+src/providers/boston.py    # concrete Boston provider — delegates to ingestion/
+src/ingestion/*.py         # one fetcher per source; returns a tidy DataFrame
+src/analysis/correlate.py  # align(), seasonal_residual(), lagged_cross_correlation()
+src/analysis/regression.py # multi-driver lagged Poisson/NB regression + surge-label logistic regression (AUC-ROC)
+src/dashboard/app.py       # Streamlit; reads Parquet, no API keys — uses correlate + regression
 src/ingestion/make_samples.py  # synthetic data with planted signals for offline/CI
 ```
 
@@ -51,6 +52,12 @@ src/ingestion/make_samples.py  # synthetic data with planted signals for offline
 | hospital_demand | `hospital.py` + `cdc_fluview.py` | `metric`, `value` |
 
 `hospital_demand` is the **dependent variable**; everything else is a driver.
+
+See README's "Known limitations" for the current honest list of gaps (MWRA
+wastewater fallback is unexercised, transit/weather only have ~1 year of real
+history, events have zero overlap with historical hospital demand, second
+city untested). Worth fixing opportunistically, but don't let them block
+unrelated work.
 
 ## Conventions to follow
 
@@ -75,6 +82,15 @@ src/ingestion/make_samples.py  # synthetic data with planted signals for offline
 - **Synthetic samples carry planted signals** (winter surge, leading indicators)
   so the correlation code can be verified to recover known relationships. When you
   add a signal, add a `make_*` to `make_samples.py` with a deliberate relationship.
+- **Deseasonalize via `correlate.seasonal_residual()`**, not ad hoc rolling
+  means — it's the single shared definition of "elevated for the time of
+  year" used by both `lagged_cross_correlation` and
+  `regression.build_surge_labels`.
+- **Count regressions default to `family="poisson"` but prefer
+  `"negative_binomial"` for real data.** On real weekly ED-visit counts,
+  Poisson p-values are wildly overconfident (overdispersion); NB is the
+  better-specified model even though it needs more data to fit cleanly. See
+  README's "What we've found so far" for a worked example.
 
 ## Data provenance
 

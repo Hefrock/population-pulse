@@ -53,7 +53,6 @@ jobs:
         env:
           MBTA_API_KEY: ${{ secrets.MBTA_API_KEY }}
           TICKETMASTER_API_KEY: ${{ secrets.TICKETMASTER_API_KEY }}
-          EVENTBRITE_API_KEY: ${{ secrets.EVENTBRITE_API_KEY }}
         run: |
           if [ -n "${{ github.event.inputs.start }}" ]; then
             python -m src.ingestion.run \

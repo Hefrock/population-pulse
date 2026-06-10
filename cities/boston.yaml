@@ -47,11 +47,6 @@ transit:
     - Green-C
     - Green-D
     - Green-E
-  # Stations near major venues — useful for event-impact analysis later.
-  venue_stations:
-    td_garden: place-north        # North Station (Celtics, Bruins, concerts)
-    fenway: place-kencl           # Kenmore (Red Sox, Fenway concerts)
-    bcec: place-wtcst             # World Trade Center (conventions)
 
 weather:
   provider: open_meteo
@@ -64,9 +59,9 @@ weather:
     - precipitation
 
 events:
-  # Manual CSV is always loaded as a baseline. Ticketmaster and Eventbrite
-  # augment it automatically when their keys are present. All three sources
-  # are merged and deduplicated in the provider.
+  # Manual CSV is always loaded as a baseline. Ticketmaster augments it
+  # automatically when its key is present; civic_events (Boston.gov) needs no
+  # key. All three sources are merged and deduplicated in the provider.
   manual_csv:
     path: data/boston_events.csv
 
@@ -160,23 +155,3 @@ hospital_demand:
   # Environmental hospitalizations (asthma, heat stress, COPD, CO, MI) directly
   # support the weather/seasonal sub-hypothesis.
   environmental_url: https://www.mass.gov/info-details/environmental-hospitalization-data
-
-hospital_locations:
-  # Static reference layer (MassGIS acute care hospitals) for geographic
-  # matching of flow signals to nearby EDs.
-  provider: massgis
-  layer: acute_care_hospitals
-
-# --- Analysis defaults -------------------------------------------------------
-
-analysis:
-  # Common resolution everything is aggregated/resampled to. Weekly is forced by
-  # the hospital data; daily is available for the flow signals and used in
-  # Phase 2 event studies.
-  base_resolution: weekly
-  # Lag windows (in days) to scan for each sub-hypothesis in cross-correlation.
-  lag_windows:
-    large_gatherings: [0, 3]
-    weather: [0, 5]
-    disease: [0, 14]
-    commute: [0, 1]

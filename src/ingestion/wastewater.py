@@ -121,7 +121,7 @@ def fetch_wastewater(
             print(f"[wastewater] No live data for {missing}; reporting the rest.")
         return out.sort_values(["pathogen", "timestamp"]).reset_index(drop=True)
 
-    # Tier 3: synthetic sample — offline / CI only.
+    # Tier 4: synthetic sample — offline / CI only.
     print(
         "\n⚠️  WARNING: [wastewater] Falling back to SYNTHETIC sample data.\n"
         "   Correlations computed with this data are not meaningful.\n"

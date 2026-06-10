@@ -29,6 +29,7 @@ import requests
 import streamlit as st
 
 from src.analysis.correlate import align, lagged_cross_correlation
+from src.analysis.regression import fit_count_regression, fit_logistic_regression
 
 DATA_BRANCH_BASE = os.environ.get(
     "POPULATION_PULSE_DATA_URL",
@@ -223,12 +224,71 @@ def main() -> None:
             value=f"{result.best_corr:+.2f}",
             delta=f"at lag {result.best_lag} weeks",
         )
-        st.caption(
-            "Reminder: correlation here is suggestive, not causal. "
-            "Confirm with matched-baseline event studies planned for Phase 2."
-        )
     except ValueError as exc:
         st.warning(str(exc))
+        return
+
+    # --- Lagged regression: surge prediction ---------------------------------
+    st.subheader("Lagged regression: does this driver predict a surge?")
+    st.caption(
+        "Builds a binary 'surge' label from weeks running hot for the time of "
+        "year (top quantile of the deseasonalized residual) and fits a "
+        "logistic regression of that label on the driver at the chosen lag, "
+        "alongside a count regression (Poisson / Negative-Binomial) of raw "
+        "weekly demand on the same lagged driver."
+    )
+
+    rcol1, rcol2, rcol3 = st.columns(3)
+    with rcol1:
+        reg_lag = st.slider(
+            "Driver lag (weeks)", min_value=0, max_value=8, value=max(result.best_lag, 0)
+        )
+    with rcol2:
+        surge_quantile = st.slider(
+            "Surge threshold (quantile)", min_value=0.5, max_value=0.95, value=0.75, step=0.05
+        )
+    with rcol3:
+        count_family = st.selectbox(
+            "Count regression family", ["negative_binomial", "poisson"], index=0
+        )
+
+    try:
+        logit_result = fit_logistic_regression(
+            aligned, "hospital_demand", {driver: reg_lag}, surge_quantile=surge_quantile,
+        )
+        m1, m2, m3 = st.columns(3)
+        m1.metric("AUC-ROC (surge)", f"{logit_result.auc:.2f}")
+        m2.metric("Pseudo-R² (surge)", f"{logit_result.pseudo_r_squared:.2f}")
+        m3.metric(f"{driver} p-value (surge)", f"{logit_result.pvalues[driver]:.4f}")
+        st.caption(
+            f"{logit_result.n_surge_weeks} of {logit_result.n_obs} weeks labeled "
+            f"'surge' at the {surge_quantile:.0%} quantile. AUC=0.50 is chance; "
+            "this is an in-sample fit, not a validated forecast."
+        )
+    except ValueError as exc:
+        st.info(f"Surge logistic regression: {exc}")
+
+    try:
+        count_result = fit_count_regression(
+            aligned, "hospital_demand", {driver: reg_lag}, family=count_family,
+        )
+        c1, c2, c3 = st.columns(3)
+        c1.metric(f"{driver} coefficient", f"{count_result.coefficients[driver]:+.3f}")
+        c2.metric(f"{driver} p-value", f"{count_result.pvalues[driver]:.4f}")
+        c3.metric("AIC", f"{count_result.aic:.1f}")
+        st.caption(
+            f"{count_result.family} GLM, n={count_result.n_obs}, "
+            f"pseudo-R²={count_result.pseudo_r_squared:.2f}. "
+            "Negative-Binomial is the better-specified model for over-dispersed "
+            "weekly counts -- compare AIC across families before trusting a p-value."
+        )
+    except ValueError as exc:
+        st.info(f"Count regression: {exc}")
+
+    st.caption(
+        "Reminder: correlation and regression here are suggestive, not causal. "
+        "Confirm with matched-baseline event studies planned for Phase 2."
+    )
 
 
 if __name__ == "__main__":

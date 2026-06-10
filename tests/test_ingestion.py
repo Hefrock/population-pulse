@@ -58,6 +58,57 @@ def test_weather_dst_localize_nonexistent():
     assert result[1].hour == 3
 
 
+# The bundled sample is generated relative to "today" (matching run.py's
+# default "trailing 365 days" ingestion window) — see make_samples._date_range.
+# A fixed calendar window here would drift out of range over time and silently
+# filter the sample to zero rows.
+_WX_END = datetime.date.today().isoformat()
+_WX_START = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+
+
+def test_weather_network_error_falls_back_to_sample(monkeypatch):
+    """If Open-Meteo is unreachable, fetch_open_meteo degrades to the bundled
+    synthetic sample instead of raising."""
+    import requests as req
+    from src.ingestion import weather
+
+    monkeypatch.setattr(
+        weather.requests, "get",
+        lambda *a, **k: (_ for _ in ()).throw(req.ConnectionError("no route to host")),
+    )
+    df = weather.fetch_open_meteo(
+        base_url="https://api.open-meteo.com/v1/forecast",
+        latitude=42.36, longitude=-71.06,
+        variables=["temperature_2m", "apparent_temperature", "precipitation"],
+        start=_WX_START, end=_WX_END,
+        timezone="America/New_York",
+    )
+    assert not df.empty
+    assert list(df.columns) == ["timestamp", "temperature_2m", "apparent_temperature", "precipitation"]
+    assert df["timestamp"].dt.tz is not None
+
+
+def test_weather_http_error_falls_back_to_sample(monkeypatch):
+    """A non-2xx response from Open-Meteo also degrades to the sample."""
+    import requests as req_module
+    from src.ingestion import weather
+
+    class _BadResp:
+        def raise_for_status(self):
+            raise req_module.HTTPError("503 Service Unavailable")
+
+    monkeypatch.setattr(weather.requests, "get", lambda *a, **k: _BadResp())
+
+    df = weather.fetch_open_meteo(
+        base_url="https://api.open-meteo.com/v1/forecast",
+        latitude=42.36, longitude=-71.06,
+        variables=["temperature_2m", "apparent_temperature", "precipitation"],
+        start=_WX_START, end=_WX_END,
+        timezone="America/New_York",
+    )
+    assert not df.empty
+
+
 def test_weather_dst_localize_ambiguous():
     """The ambiguous 1 AM fall-back hour must not crash (ambiguous=False → standard time)."""
     naive = pd.to_datetime([
