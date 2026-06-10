@@ -144,11 +144,18 @@ def make_weather() -> None:
 
 
 def make_events() -> None:
-    """A handful of clean, datable large gatherings."""
+    """A handful of clean, datable large gatherings.
+
+    Dates are fixed calendar dates for recognizable annual events (NBA season
+    opener, New Year's Eve, Patriots' Day marathon), picked for the *current*
+    instance of each so they fall inside run.py's trailing-365-day default
+    window. Like data/boston_academic_calendar.csv, this drifts out of range
+    over time and needs an annual refresh to the next instance of each event.
+    """
     rows = [
-        {"date": "2024-10-15", "venue": "TD Garden", "name": "Celtics Opener", "expected_attendance": 19000},
-        {"date": "2024-12-31", "venue": "Boston Common", "name": "First Night", "expected_attendance": 50000},
-        {"date": "2025-04-21", "venue": "Boston", "name": "Boston Marathon", "expected_attendance": 500000},
+        {"date": "2025-10-21", "venue": "TD Garden", "name": "Celtics Opener", "expected_attendance": 19000},
+        {"date": "2025-12-31", "venue": "Boston Common", "name": "First Night", "expected_attendance": 50000},
+        {"date": "2026-04-20", "venue": "Boston", "name": "Boston Marathon", "expected_attendance": 500000},
     ]
     pd.DataFrame(rows).to_csv(Path("data/boston_events.csv"), index=False)
 

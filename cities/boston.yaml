@@ -64,9 +64,9 @@ weather:
     - precipitation
 
 events:
-  # Manual CSV is always loaded as a baseline. Ticketmaster and Eventbrite
-  # augment it automatically when their keys are present. All three sources
-  # are merged and deduplicated in the provider.
+  # Manual CSV is always loaded as a baseline. Ticketmaster augments it
+  # automatically when its key is present; civic_events (Boston.gov) needs no
+  # key. All three sources are merged and deduplicated in the provider.
   manual_csv:
     path: data/boston_events.csv
 

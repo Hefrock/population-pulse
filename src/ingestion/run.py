@@ -15,7 +15,11 @@ import argparse
 from datetime import date, timedelta
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from src.providers import load_provider
+
+load_dotenv()
 
 
 def _default_range() -> tuple[str, str]:
