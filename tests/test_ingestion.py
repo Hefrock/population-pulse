@@ -416,12 +416,23 @@ def test_academic_calendar_sums_schools_via_align():
 
 from src.ingestion import wastewater
 
+# The bundled sample is generated relative to "today" (matching run.py's
+# default "trailing 365 days" ingestion window) — see make_samples._date_range.
+# A fixed calendar window here would drift out of range over time and silently
+# filter the sample to zero rows, exactly like the bug this mirrors.
+_WW_END = datetime.date.today().isoformat()
+_WW_START = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
+
 
 def test_wastewater_canonical_pathogen_maps_aliases():
     assert wastewater._canonical_pathogen("SARS-CoV-2") == "SARS-CoV-2"
     assert wastewater._canonical_pathogen("sars cov 2 wastewater") == "SARS-CoV-2"
-    # "influenza a" must win over the shorter "influenza" alias.
+    assert wastewater._canonical_pathogen("N Gene") == "SARS-CoV-2"
+    # "influenza a"/"influenza b" must win over the shorter "influenza" alias
+    # (which would otherwise mis-bucket Influenza B as Influenza A).
     assert wastewater._canonical_pathogen("Influenza A virus") == "Influenza A"
+    assert wastewater._canonical_pathogen("Influenza A F1R1") == "Influenza A"
+    assert wastewater._canonical_pathogen("Influenza B") == "Influenza B"
     assert wastewater._canonical_pathogen("RSV activity") == "RSV"
     assert wastewater._canonical_pathogen("norovirus") is None
 
@@ -429,7 +440,7 @@ def test_wastewater_canonical_pathogen_maps_aliases():
 def test_wastewater_sample_has_all_pathogens():
     df = wastewater._load_sample(
         ["SARS-CoV-2", "Influenza A", "RSV"],
-        start="2024-06-01", end="2025-05-31", timezone="America/New_York",
+        start=_WW_START, end=_WW_END, timezone="America/New_York",
     )
     assert list(df.columns) == ["timestamp", "pathogen", "value", "source"]
     assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A", "RSV"}
@@ -438,7 +449,7 @@ def test_wastewater_sample_has_all_pathogens():
 
 def test_wastewater_sample_filters_to_requested_pathogens():
     df = wastewater._load_sample(
-        ["RSV"], start="2024-06-01", end="2025-05-31", timezone="America/New_York",
+        ["RSV"], start=_WW_START, end=_WW_END, timezone="America/New_York",
     )
     assert set(df["pathogen"].unique()) == {"RSV"}
 
@@ -492,7 +503,7 @@ def test_fetch_wastewater_falls_back_to_sample_when_sources_unreachable(monkeypa
 
     df = wastewater.fetch_wastewater(
         pathogens=["SARS-CoV-2", "Influenza A", "RSV"],
-        start="2024-06-01", end="2025-05-31", timezone="America/New_York",
+        start=_WW_START, end=_WW_END, timezone="America/New_York",
         mwra={"base_url": "https://example.invalid"},  # no data_url -> skipped
         cdc_nwss={"base_url": "https://data.cdc.gov/resource/atcp-73re.json"},
     )
@@ -528,3 +539,71 @@ def test_fetch_wastewater_prefers_mwra_for_sars(monkeypatch):
     assert "SARS-CoV-2" not in captured["pathogens"]
     assert df.loc[df["pathogen"] == "SARS-CoV-2", "source"].iloc[0] == "mwra"
     assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A", "RSV"}
+
+
+def test_parse_wastewaterscan_extracts_pathogens():
+    """Maps WastewaterSCAN's per-sample 'targets' dict to canonical pathogens."""
+    payload = {
+        "samples": [
+            {
+                "collection_date": "2025-01-05",
+                "targets": {
+                    "N Gene": {"gc_g_dry_weight": 1000.0},
+                    "Influenza A": {"gc_g_dry_weight": 50.0},
+                    "RSV": {"gc_g_dry_weight": 25.0},
+                    "PMMoV": {"gc_g_dry_weight": 9999.0},  # not a requested pathogen
+                    "MPXV_G2R_G": {"gc_g_dry_weight": None},  # missing value, dropped
+                },
+            },
+        ],
+    }
+    df = wastewater._parse_wastewaterscan(
+        payload, ["SARS-CoV-2", "Influenza A", "RSV"],
+        start="2024-06-01", end="2025-12-31", timezone="America/New_York",
+    )
+    assert set(df["pathogen"]) == {"SARS-CoV-2", "Influenza A", "RSV"}
+    assert (df["source"] == "wastewaterscan").all()
+    assert df.loc[df["pathogen"] == "SARS-CoV-2", "value"].iloc[0] == 1000.0
+
+
+def test_fetch_wastewater_prefers_wastewaterscan(monkeypatch):
+    """WastewaterSCAN supplies all pathogens; MWRA/CDC NWSS are not consulted."""
+    wws_df = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2025-01-05"] * 3).tz_localize("America/New_York"),
+        "pathogen": ["SARS-CoV-2", "Influenza A", "RSV"],
+        "value": [1000.0, 50.0, 25.0],
+        "source": ["wastewaterscan"] * 3,
+    })
+    monkeypatch.setattr(wastewater, "_fetch_wastewaterscan", lambda *a, **k: wws_df)
+
+    def boom(*args, **kwargs):
+        raise AssertionError("MWRA/CDC NWSS should not be called when WastewaterSCAN covers everything")
+    monkeypatch.setattr(wastewater, "_fetch_mwra", boom)
+    monkeypatch.setattr(wastewater, "_fetch_cdc_nwss", boom)
+
+    df = wastewater.fetch_wastewater(
+        pathogens=["SARS-CoV-2", "Influenza A", "RSV"],
+        start="2024-06-01", end="2025-12-31", timezone="America/New_York",
+        wastewaterscan={"plant_uid": "b50c6424"},
+        mwra={"data_url": "x"}, cdc_nwss={"base_url": "y"},
+    )
+    assert (df["source"] == "wastewaterscan").all()
+    assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A", "RSV"}
+
+
+def test_fetch_wastewater_wastewaterscan_unreachable_falls_through(monkeypatch):
+    """A WastewaterSCAN error degrades to MWRA/CDC NWSS, not straight to sample."""
+    monkeypatch.setattr(wastewater.requests, "get", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    mwra_df = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2025-01-01"]).tz_localize("America/New_York"),
+        "pathogen": ["SARS-CoV-2"], "value": [123.0], "source": ["mwra"],
+    })
+    monkeypatch.setattr(wastewater, "_fetch_mwra", lambda *a, **k: mwra_df)
+
+    df = wastewater.fetch_wastewater(
+        pathogens=["SARS-CoV-2"],
+        start="2024-06-01", end="2025-12-31", timezone="America/New_York",
+        wastewaterscan={"plant_uid": "b50c6424"}, mwra={"data_url": "x"},
+    )
+    assert df.loc[df["pathogen"] == "SARS-CoV-2", "source"].iloc[0] == "mwra"

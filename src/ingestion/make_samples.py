@@ -21,8 +21,22 @@ RNG = np.random.default_rng(42)
 
 
 def _date_range() -> pd.DatetimeIndex:
-    # One year of daily timestamps, tz-naive (loaders localize on read).
-    return pd.date_range("2024-06-01", "2025-05-31", freq="D")
+    """Trailing ~365 days of daily timestamps, tz-naive (loaders localize on read).
+
+    Anchored to *today* rather than a fixed calendar window — run.py's default
+    ingestion window is also "trailing 365 days from today", and a fixed window
+    silently drifts out of that range over time. When that happens, any signal
+    that falls back to its sample (e.g. wastewater when MWRA/CDC are unreachable)
+    gets filtered down to zero rows with no error — exactly what happened here.
+    """
+    end = pd.Timestamp.today().normalize()
+    start = end - pd.Timedelta(days=364)
+    return pd.date_range(start, end, freq="D")
+
+
+def _week_range() -> pd.DatetimeIndex:
+    days = _date_range()
+    return pd.date_range(days[0], days[-1], freq="W")
 
 
 def make_transit() -> None:
@@ -42,7 +56,7 @@ def make_transit() -> None:
 
 def make_hospital() -> None:
     """Weekly ED respiratory visits with a planted winter surge."""
-    weeks = pd.date_range("2024-06-01", "2025-05-31", freq="W")
+    weeks = _week_range()
     rows = []
     for w in weeks:
         # Surge centered on January (~day 15 of year).
@@ -69,7 +83,7 @@ def make_wastewater() -> None:
     shape: RSV peaks earliest (late fall), flu sharpest mid-winter, SARS-CoV-2
     broad winter plus a smaller summer bump.
     """
-    weeks = pd.date_range("2024-06-01", "2025-05-31", freq="W")
+    weeks = _week_range()
     # Shapes keyed by (winter-peak day-of-year, width, summer-bump amplitude).
     shapes = {
         "SARS-CoV-2": (1, 45, 0.5),   # broad, leads hospital peak; summer wave

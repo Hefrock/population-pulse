@@ -58,9 +58,13 @@ These are analyzed separately because they'd confound each other in a single cor
 | Wastewater (SARS-CoV-2) | MWRA Deer Island / Biobot (metro-Boston) | ~Daily | None |
 | Wastewater (SARS-CoV-2, Flu A, RSV) | CDC NWSS Wastewater Viral Activity Level (Socrata) | Weekly | None |
 | Hospital demand | CDC FluView via Delphi Epidata | Weekly ILI counts | None |
-| Hospital demand (better) | MA DPH Respiratory Dashboard | Weekly ED visits | Manual download |
+| Hospital demand (active) | MA DPH Respiratory Dashboard | Weekly ED visits + admissions | Manual download |
 
-**On hospital data:** CDC FluView provides real ILI (influenza-like illness) patient counts from sentinel providers — a good proxy, fully automated. For actual ED visit counts, download the weekly Excel file from [mass.gov/info-details/weekly-flu-report](https://www.mass.gov/info-details/weekly-flu-report) and save it as `data/ma_dph_respiratory.csv`. The pipeline will use it automatically.
+**On hospital data:** `data/ma_dph_respiratory.csv` (statewide weekly ED visits and admissions for "broad acute respiratory" diagnoses, 2019–present) is checked in and is the pipeline's Tier 1 — CDC FluView's ILI proxy is now only a fallback. To refresh it, download the current "Respiratory Disease Reporting" workbook from [mass.gov/info-details/weekly-flu-report](https://www.mass.gov/info-details/weekly-flu-report) (its "Visits by week" sheet covers all prior seasons) and run:
+
+```bash
+python scripts/build_ma_dph_csv.py path/to/RespiratoryDiseaseReporting*.xlsx
+```
 
 **On the academic calendar:** there is no API for university term dates, so `data/boston_academic_calendar.csv` is a hand-curated reference (the same "manual baseline" pattern as the events CSV). Term dates are validated against each school's registrar and carry a `source` column (`verified-*`, `estimate`, or `prior-year-pattern`); refresh it ~10 minutes once a year when schools publish their next calendar.
 

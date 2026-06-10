@@ -142,13 +142,21 @@ def main() -> None:
         if k != "events" and not v.empty
     }
 
-    # Hospital demand has multiple metric rows per week (ILI patients +
-    # total patients). Keep only the primary metric so the weekly sum in
-    # align() reflects ILI patients rather than an arbitrary mixture.
+    # Hospital demand has multiple metric rows per week (e.g. ED visits +
+    # admissions, or ILI patients + total patients depending on which fetcher
+    # tier supplied the data). Keep only one primary metric so the weekly sum
+    # in align() reflects a single series rather than an arbitrary mixture.
+    # Preference order matches hospital.py's fallback tiers: MA DPH ED visits,
+    # then the CDC FluView ILI proxy.
     hd = numeric_signals.get("hospital_demand", pd.DataFrame())
     if not hd.empty and "metric" in hd.columns:
-        primary = hd[hd["metric"] == "ili_patients"]
-        numeric_signals["hospital_demand"] = primary if not primary.empty else hd
+        for primary_metric in ("ed_visits_respiratory", "ili_patients"):
+            primary = hd[hd["metric"] == primary_metric]
+            if not primary.empty:
+                numeric_signals["hospital_demand"] = primary
+                break
+        else:
+            numeric_signals["hospital_demand"] = hd
 
     # Wastewater is long-form (one row per pathogen). Split each pathogen into
     # its own series so they correlate independently — summing different viral

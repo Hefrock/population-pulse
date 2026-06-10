@@ -13,20 +13,31 @@ viruses, so the output carries a ``pathogen`` dimension and the dashboard
 correlates each one against hospital demand separately (summing different
 viral scales into one number would be meaningless).
 
-Three-tier fallback, mirroring the rest of the pipeline:
-  1. MWRA Deer Island (Biobot)  — metro-Boston SARS-CoV-2, the local gold
-     standard (~2.3M-person sewershed, North + South systems).
-  2. CDC NWSS "Wastewater Viral Activity Level" — SARS-CoV-2, Influenza A and
+Four-tier fallback, mirroring the rest of the pipeline:
+  1. WastewaterSCAN (Stanford/Emory) — plant-level, multi-pathogen data for
+     Deer Island (metro-Boston), via a public-but-undocumented JSON endpoint
+     behind their dashboard. Covers SARS-CoV-2, Influenza A and RSV with
+     several years of twice-weekly history.
+  2. MWRA Deer Island (Biobot)  — metro-Boston SARS-CoV-2, used if
+     WastewaterSCAN is down or doesn't cover SARS-CoV-2.
+  3. CDC NWSS "Wastewater Viral Activity Level" — SARS-CoV-2, Influenza A and
      RSV for Massachusetts statewide, via the data.cdc.gov Socrata API (no key).
-     Fills in the pathogens MWRA's COVID-only feed doesn't cover.
-  3. Bundled synthetic sample   — offline / CI only, with a planted lead.
+     Fills in whatever pathogens the first two tiers didn't cover.
+  4. Bundled synthetic sample   — offline / CI only, with a planted lead.
 
 Output (long form): ``timestamp``, ``pathogen``, ``value``, ``source``.
 
-Both live sources are written defensively (auto-discovering field names and
-failing gracefully) because their schemas can shift and neither is reachable
-from every environment; when both are unreachable the pipeline still runs on
-the sample, exactly like the transit and hospital fetchers.
+All live sources are written defensively (auto-discovering field names and
+failing gracefully) because their schemas can shift and none is reachable from
+every environment; when all are unreachable the pipeline still runs on the
+sample, exactly like the transit and hospital fetchers.
+
+CAVEAT on WastewaterSCAN: the endpoint
+(``storage.googleapis.com/wastewater-dev-data/json/<plant_uid>.json``) is the
+backing data store for the public dashboard at data.wastewaterscan.org, found
+by inspecting its network requests — it is not a documented/stable API
+(``plants.json`` even reports ``allow_download: false`` for every plant) and
+could change or disappear without notice. Treat it as best-effort.
 """
 
 from __future__ import annotations
@@ -45,13 +56,19 @@ _PATHOGEN_ALIASES = {
     "sars": "SARS-CoV-2",
     "cov": "SARS-CoV-2",
     "covid": "SARS-CoV-2",
+    "n gene": "SARS-CoV-2",  # WastewaterSCAN's SARS-CoV-2 nucleocapsid-gene target
     "influenza a": "Influenza A",
     "flu a": "Influenza A",
     "flua": "Influenza A",
+    "influenza b": "Influenza B",
+    "flu b": "Influenza B",
+    "flub": "Influenza B",
     "influenza": "Influenza A",
     "rsv": "RSV",
     "respiratory syncytial": "RSV",
 }
+
+WASTEWATERSCAN_URL_TEMPLATE = "https://storage.googleapis.com/wastewater-dev-data/json/{plant_uid}.json"
 
 
 def fetch_wastewater(
@@ -59,27 +76,37 @@ def fetch_wastewater(
     start: str,
     end: str,
     timezone: str,
+    wastewaterscan: dict | None = None,
     mwra: dict | None = None,
     cdc_nwss: dict | None = None,
 ) -> pd.DataFrame:
     """Return a long-form wastewater series for the requested ``pathogens``.
 
     Columns: ``timestamp``, ``pathogen``, ``value``, ``source``. Prefers the
-    metro-Boston MWRA feed for SARS-CoV-2 and CDC NWSS for the rest; falls back
-    to the bundled sample when no live source is reachable.
+    plant-level WastewaterSCAN feed, then the metro-Boston MWRA feed for
+    SARS-CoV-2, then CDC NWSS for whatever's left; falls back to the bundled
+    sample when no live source is reachable.
     """
     wanted = [_canonical_pathogen(p) or p for p in pathogens]
     frames: list[pd.DataFrame] = []
     covered: set[str] = set()
 
-    # Tier 1: MWRA Deer Island — metro-Boston SARS-CoV-2 only.
-    if mwra and "SARS-CoV-2" in wanted:
+    # Tier 1: WastewaterSCAN — plant-level (Deer Island), multi-pathogen.
+    if wastewaterscan:
+        wws_df = _fetch_wastewaterscan(wastewaterscan, wanted, start, end, timezone)
+        if not wws_df.empty:
+            frames.append(wws_df)
+            covered.update(wws_df["pathogen"].unique())
+
+    # Tier 2: MWRA Deer Island — metro-Boston SARS-CoV-2, if not already covered.
+    remaining = [p for p in wanted if p not in covered]
+    if mwra and "SARS-CoV-2" in remaining:
         mwra_df = _fetch_mwra(mwra, start, end, timezone)
         if not mwra_df.empty:
             frames.append(mwra_df)
             covered.update(mwra_df["pathogen"].unique())
 
-    # Tier 2: CDC NWSS — fill in whatever pathogens MWRA didn't cover.
+    # Tier 3: CDC NWSS — fill in whatever pathogens the above didn't cover.
     remaining = [p for p in wanted if p not in covered]
     if cdc_nwss and remaining:
         cdc_df = _fetch_cdc_nwss(cdc_nwss, remaining, start, end, timezone)
@@ -117,7 +144,69 @@ def _canonical_pathogen(raw: str) -> str | None:
     return None
 
 
-# --- Tier 1: MWRA / Biobot ---------------------------------------------------
+# --- Tier 1: WastewaterSCAN ---------------------------------------------------
+
+def _fetch_wastewaterscan(
+    cfg: dict, pathogens: list[str], start: str, end: str, timezone: str
+) -> pd.DataFrame:
+    """Plant-level multi-pathogen series from WastewaterSCAN's data store.
+
+    See the module docstring for the stability caveat — any failure (network,
+    HTTP, unexpected JSON) returns an empty frame so MWRA/CDC NWSS take over.
+    """
+    cols = ["timestamp", "pathogen", "value", "source"]
+    plant_uid = cfg.get("plant_uid")
+    if not plant_uid:
+        return pd.DataFrame(columns=cols)
+
+    url = WASTEWATERSCAN_URL_TEMPLATE.format(plant_uid=plant_uid)
+    try:
+        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001 — degrade to the next tier
+        print(f"[wastewater] WastewaterSCAN unavailable ({exc}); trying MWRA/CDC NWSS.")
+        return pd.DataFrame(columns=cols)
+
+    return _parse_wastewaterscan(data, pathogens, start, end, timezone)
+
+
+def _parse_wastewaterscan(
+    data: dict, pathogens: list[str], start: str, end: str, timezone: str
+) -> pd.DataFrame:
+    """Normalize a WastewaterSCAN ``json/<plant_uid>.json`` payload.
+
+    Each sample has a ``collection_date`` and a ``targets`` dict keyed by
+    assay name (e.g. "N Gene", "Influenza A", "RSV"); we take the dry-weight
+    genome-copy concentration (``gc_g_dry_weight``) for whichever targets map
+    to a requested pathogen. Kept pure (no network) so it can be unit-tested
+    against a captured payload.
+    """
+    cols = ["timestamp", "pathogen", "value", "source"]
+    rows = []
+    for sample in data.get("samples", []):
+        date = sample.get("collection_date")
+        for target, metrics in sample.get("targets", {}).items():
+            canon = _canonical_pathogen(target)
+            if canon is None or canon not in pathogens:
+                continue
+            value = metrics.get("gc_g_dry_weight")
+            if value is None:
+                continue
+            rows.append((date, canon, value))
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    out = pd.DataFrame(rows, columns=["timestamp", "pathogen", "value"])
+    out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce")
+    out["value"] = pd.to_numeric(out["value"], errors="coerce")
+    out = out.dropna(subset=["timestamp", "value"])
+    out["source"] = "wastewaterscan"
+    return _localize_and_window(out, start, end, timezone)
+
+
+# --- Tier 2: MWRA / Biobot ---------------------------------------------------
 
 def _fetch_mwra(cfg: dict, start: str, end: str, timezone: str) -> pd.DataFrame:
     """Best-effort metro-Boston SARS-CoV-2 from the MWRA Biobot feed.
@@ -156,7 +245,7 @@ def _fetch_mwra(cfg: dict, start: str, end: str, timezone: str) -> pd.DataFrame:
     return _localize_and_window(out, start, end, timezone)
 
 
-# --- Tier 2: CDC NWSS (Socrata) ----------------------------------------------
+# --- Tier 3: CDC NWSS (Socrata) ----------------------------------------------
 
 def _fetch_cdc_nwss(
     cfg: dict, pathogens: list[str], start: str, end: str, timezone: str
@@ -242,7 +331,7 @@ def _parse_cdc_nwss(
     return _localize_and_window(out, start, end, timezone)
 
 
-# --- Tier 3: sample ----------------------------------------------------------
+# --- Tier 4: sample ----------------------------------------------------------
 
 def _load_sample(
     pathogens: list[str], start: str, end: str, timezone: str

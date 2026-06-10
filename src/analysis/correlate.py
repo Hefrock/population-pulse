@@ -64,6 +64,23 @@ def _first_numeric(df: pd.DataFrame) -> str | None:
     return None
 
 
+def seasonal_residual(series: pd.Series, window: int | None = None) -> pd.Series:
+    """Remove a centered rolling-mean seasonal/trend component.
+
+    This is the same cheap deseasonalization ``lagged_cross_correlation`` uses
+    internally, factored out so other analyses (e.g. the logistic-regression
+    "surge" label in ``regression.py``) can define "elevated relative to that
+    time of year" the same way correlation does.
+
+    ``window`` defaults to ``min(13, max(3, len(series) // 4))`` — roughly a
+    quarter, capped at 13 weeks (one season) and floored at 3.
+    """
+    s = series.astype(float)
+    if window is None:
+        window = min(13, max(3, len(s) // 4))
+    return s - s.rolling(window, center=True, min_periods=1).mean()
+
+
 @dataclass
 class CrossCorrResult:
     """Result of a lagged cross-correlation scan."""
@@ -100,10 +117,8 @@ def lagged_cross_correlation(
     r = df["response"].astype(float)
 
     if deseasonalize:
-        # Remove a centered rolling mean as a cheap seasonal/trend filter.
-        window = min(13, max(3, len(df) // 4))
-        d = d - d.rolling(window, center=True, min_periods=1).mean()
-        r = r - r.rolling(window, center=True, min_periods=1).mean()
+        d = seasonal_residual(d)
+        r = seasonal_residual(r)
 
     lags = list(range(0, max_lag + 1))
     corrs = []
