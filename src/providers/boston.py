@@ -132,6 +132,7 @@ class BostonProvider(CityDataProvider):
             start=start,
             end=end,
             timezone=self.timezone,
+            wastewaterscan=cfg.get("wastewaterscan"),
             mwra=cfg.get("mwra"),
             cdc_nwss=cfg.get("cdc_nwss"),
         )
