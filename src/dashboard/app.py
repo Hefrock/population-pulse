@@ -24,11 +24,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
 
-from src.analysis.correlate import align, lagged_cross_correlation
+from src.analysis.correlate import align, lagged_cross_correlation, seasonal_residual
 from src.analysis.regression import fit_count_regression, fit_logistic_regression
 
 DATA_BRANCH_BASE = os.environ.get(
@@ -37,6 +38,10 @@ DATA_BRANCH_BASE = os.environ.get(
 )
 
 SIGNALS = ["transit", "weather", "events", "academic_calendar", "wastewater", "hospital_demand"]
+
+# Shared categorical palette so a given signal gets the same color everywhere
+# it appears (currently just the timeline, but keeps future charts consistent).
+COLOR_SCHEME = "tableau10"
 
 st.set_page_config(page_title="population-pulse", layout="wide")
 
@@ -92,52 +97,13 @@ def _filter_by_date(
     return out
 
 
-def main() -> None:
-    st.title("population-pulse")
-    st.caption(
-        "Do population surges — events, weather, disease — correlate with "
-        "hospital ED demand? Phase 1: descriptive exploration."
-    )
+def _build_numeric_signals(signals: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Pick out the signals (and sub-series) that ``align()`` can resample.
 
-    with st.sidebar:
-        city = st.selectbox("City", ["boston"], index=0)
-        st.markdown("**Date range**")
-        default_end = pd.Timestamp.now(tz="UTC").normalize()
-        default_start = default_end - pd.Timedelta(days=365)
-        start_date = st.date_input("From", value=default_start.date())
-        end_date = st.date_input("To", value=default_end.date())
-        st.markdown("---")
-        st.caption(
-            "Data refreshes daily via GitHub Actions. "
-            "No API keys are needed to view this dashboard."
-        )
-
-    with st.spinner("Loading data…"):
-        try:
-            raw_signals = _load_signals(city)
-        except Exception as exc:
-            st.error(f"Could not load data: {exc}")
-            st.info(
-                "For local development run: "
-                "`python -m src.ingestion.make_samples`"
-            )
-            return
-
-    start_ts = pd.Timestamp(start_date, tz="UTC")
-    end_ts = pd.Timestamp(end_date, tz="UTC")
-    signals = _filter_by_date(raw_signals, start_ts, end_ts)
-
-    all_empty = all(v.empty for v in signals.values())
-    if all_empty:
-        st.warning(
-            "No data available yet. "
-            "The GitHub Actions pipeline runs daily — check back after the first run, "
-            "or run `python -m src.ingestion.run --city boston` locally."
-        )
-        return
-
-    # --- Aligned timeline ----------------------------------------------------
-    st.subheader("Signals on a shared weekly timeline")
+    ``events`` is excluded here — it's shown as markers on the timeline
+    instead. Hospital demand is reduced to one primary metric, and wastewater
+    is split one series per pathogen, both for the reasons described inline.
+    """
     numeric_signals = {
         k: v for k, v in signals.items()
         if k != "events" and not v.empty
@@ -168,37 +134,153 @@ def main() -> None:
         for pathogen, grp in ww.groupby("pathogen"):
             numeric_signals[f"wastewater: {pathogen}"] = grp
 
-    aligned = align(numeric_signals, resolution="W")
-    if aligned.empty:
-        st.warning("No numeric signals to display for this date range.")
+    return numeric_signals
+
+
+def _signal_freshness(raw_signals: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    rows = []
+    for name in SIGNALS:
+        df = raw_signals.get(name, pd.DataFrame())
+        if df.empty or "timestamp" not in df.columns:
+            rows.append({"signal": name, "latest data point": "no data"})
+            continue
+        latest = pd.to_datetime(df["timestamp"], utc=True).max()
+        rows.append({"signal": name, "latest data point": latest.date().isoformat()})
+    return pd.DataFrame(rows)
+
+
+def _render_overview(
+    aligned: pd.DataFrame,
+    raw_signals: dict[str, pd.DataFrame],
+    signals: dict[str, pd.DataFrame],
+) -> None:
+    hd = aligned["hospital_demand"].dropna() if "hospital_demand" in aligned.columns else pd.Series(dtype=float)
+
+    if len(hd) >= 4:
+        residual = seasonal_residual(hd)
+        latest_value = hd.iloc[-1]
+        latest_residual = residual.iloc[-1]
+        hi = residual.quantile(0.75)
+        lo = residual.quantile(0.25)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Hospital demand (latest week)", f"{latest_value:,.0f}")
+        c2.metric("Vs. seasonal baseline", f"{latest_residual:+,.1f}")
+        c3.metric("Weeks of data in range", f"{len(hd)}")
+
+        if latest_residual > hi:
+            st.warning(
+                "**Elevated for this time of year** — the latest week sits in the "
+                "top quarter of residuals after removing the seasonal trend."
+            )
+        elif latest_residual < lo:
+            st.info(
+                "**Below baseline for this time of year** — the latest week sits "
+                "in the bottom quarter of residuals after removing the seasonal trend."
+            )
+        else:
+            st.success(
+                "**Normal for this time of year** — the latest week is within the "
+                "typical range of the seasonal trend."
+            )
+    else:
+        st.info("Not enough hospital-demand data in this date range for a status summary.")
+
+    col_events, col_freshness = st.columns(2)
+
+    with col_events:
+        st.markdown("#### Notable events in this window")
+        events_df = signals.get("events", pd.DataFrame())
+        if events_df.empty:
+            st.caption("No events from the manual CSV, Ticketmaster, or civic calendar fall in this date range.")
+        else:
+            show = events_df.copy()
+            show["timestamp"] = pd.to_datetime(show["timestamp"], utc=True).dt.date
+            show = show.rename(columns={
+                "timestamp": "date", "name": "event", "expected_attendance": "expected attendance",
+            })
+            cols = [c for c in ["date", "event", "venue", "expected attendance"] if c in show.columns]
+            st.dataframe(
+                show[cols].sort_values("date"), width="stretch", hide_index=True,
+            )
+
+    with col_freshness:
+        st.markdown("#### Data freshness")
+        st.dataframe(_signal_freshness(raw_signals), width="stretch", hide_index=True)
+        st.caption("Latest timestamp available per signal, regardless of the date range selected above.")
+
+
+def _render_timeline(aligned: pd.DataFrame, events_df: pd.DataFrame) -> None:
+    st.caption(
+        "Each signal is shown as a z-score (mean 0, std 1 over this date range) "
+        "so series with very different units and scales — ridership, °C, ED "
+        "visits — are comparable on one chart. The correlation and regression "
+        "tab uses the raw values."
+    )
+
+    columns = list(aligned.columns)
+    selected = st.multiselect("Signals to show", options=columns, default=columns)
+    if not selected:
+        st.info("Select at least one signal to plot.")
         return
 
-    # Standardize each signal (z-score) for the line chart.
-    # Signals have incompatible units and scales (ridership in millions,
-    # temperature in °C, ILI patients in hundreds) — raw values make one
-    # signal dominate the chart. Correlation below uses the raw aligned frame.
-    std = aligned.std()
-    mean = aligned.mean()
+    std = aligned[selected].std()
+    mean = aligned[selected].mean()
     flat_signals = std[std == 0].index.tolist()
     if flat_signals:
         st.warning(
             f"Signal(s) {flat_signals} have zero variance in this date range "
             "and will appear as a flat line."
         )
-    aligned_display = (aligned - mean) / std.replace(0, 1)
-    st.line_chart(aligned_display)
-    st.caption(
-        "Signals shown as z-scores (mean 0, std 1) so different units "
-        "are comparable. Raw values are used for the correlation below."
+    z = (aligned[selected] - mean) / std.replace(0, 1)
+
+    raw_long = aligned[selected].reset_index().melt(
+        id_vars="timestamp", var_name="signal", value_name="raw_value"
+    )
+    z_long = z.reset_index().melt(id_vars="timestamp", var_name="signal", value_name="zscore")
+    long_df = raw_long.merge(z_long, on=["timestamp", "signal"]).dropna(subset=["zscore"])
+
+    line = alt.Chart(long_df).mark_line().encode(
+        x=alt.X("timestamp:T", title="Week"),
+        y=alt.Y("zscore:Q", title="Z-score (std devs from mean)"),
+        color=alt.Color("signal:N", title="Signal", scale=alt.Scale(scheme=COLOR_SCHEME)),
+        tooltip=[
+            alt.Tooltip("timestamp:T", title="Week"),
+            alt.Tooltip("signal:N", title="Signal"),
+            alt.Tooltip("raw_value:Q", title="Raw value", format=",.2f"),
+            alt.Tooltip("zscore:Q", title="Z-score", format="+.2f"),
+        ],
     )
 
-    # --- Lagged cross-correlation -------------------------------------------
-    st.subheader("Lagged cross-correlation vs. hospital demand")
-    st.caption(
-        "Positive lag = the driver leads hospital demand by that many weeks. "
-        "Deseasonalized by default to avoid spurious winter-trend correlation."
-    )
+    chart = line
+    if not events_df.empty:
+        ev = events_df.copy()
+        ev["timestamp"] = pd.to_datetime(ev["timestamp"], utc=True)
+        rules = alt.Chart(ev).mark_rule(color="gray", strokeDash=[4, 4], opacity=0.6).encode(
+            x="timestamp:T",
+            tooltip=[
+                alt.Tooltip("timestamp:T", title="Date"),
+                alt.Tooltip("name:N", title="Event"),
+                alt.Tooltip("venue:N", title="Venue"),
+                alt.Tooltip("expected_attendance:Q", title="Expected attendance", format=",.0f"),
+            ],
+        )
+        chart = line + rules
+        st.caption("Dashed vertical lines mark known large events (hover for details).")
 
+    st.altair_chart(chart.properties(height=420).interactive(), width="stretch")
+
+    with st.expander("Aligned weekly data table"):
+        st.dataframe(aligned, width="stretch")
+        st.download_button(
+            "Download as CSV",
+            data=aligned.to_csv().encode("utf-8"),
+            file_name="population_pulse_aligned_weekly.csv",
+            mime="text/csv",
+        )
+
+
+def _render_correlation_and_regression(aligned: pd.DataFrame) -> None:
     drivers = [c for c in aligned.columns if c != "hospital_demand"]
     if "hospital_demand" not in aligned.columns or not drivers:
         st.info("Need both a driver signal and hospital_demand to correlate.")
@@ -210,26 +292,40 @@ def main() -> None:
     with col2:
         deseason = st.checkbox("Deseasonalize first (recommended)", value=True)
 
+    st.caption(
+        "Positive lag = the driver leads hospital demand by that many weeks. "
+        "Deseasonalized by default to avoid spurious winter-trend correlation."
+    )
+
     try:
         result = lagged_cross_correlation(
             aligned[driver], aligned["hospital_demand"],
             max_lag=8, deseasonalize=deseason,
         )
-        corr_df = pd.DataFrame(
-            {"lag_weeks": result.lags, "correlation": result.correlations}
-        ).set_index("lag_weeks")
-        st.bar_chart(corr_df)
-        st.metric(
-            label=f"Strongest correlation ({driver} → hospital demand)",
-            value=f"{result.best_corr:+.2f}",
-            delta=f"at lag {result.best_lag} weeks",
-        )
     except ValueError as exc:
         st.warning(str(exc))
         return
 
-    # --- Lagged regression: surge prediction ---------------------------------
-    st.subheader("Lagged regression: does this driver predict a surge?")
+    corr_df = pd.DataFrame({"lag_weeks": result.lags, "correlation": result.correlations})
+    bars = alt.Chart(corr_df).mark_bar().encode(
+        x=alt.X("lag_weeks:O", title="Lag (weeks)"),
+        y=alt.Y("correlation:Q", title="Correlation", scale=alt.Scale(domain=[-1, 1])),
+        color=alt.condition(
+            alt.datum.correlation > 0, alt.value("#1f77b4"), alt.value("#d62728"),
+        ),
+        tooltip=[
+            alt.Tooltip("lag_weeks:O", title="Lag (weeks)"),
+            alt.Tooltip("correlation:Q", title="Correlation", format="+.3f"),
+        ],
+    ).properties(height=280)
+    st.altair_chart(bars, width="stretch")
+    st.metric(
+        label=f"Strongest correlation ({driver} → hospital demand)",
+        value=f"{result.best_corr:+.2f}",
+        delta=f"at lag {result.best_lag} weeks",
+    )
+
+    st.markdown("#### Lagged regression: does this driver predict a surge?")
     st.caption(
         "Builds a binary 'surge' label from weeks running hot for the time of "
         "year (top quantile of the deseasonalized residual) and fits a "
@@ -285,10 +381,83 @@ def main() -> None:
     except ValueError as exc:
         st.info(f"Count regression: {exc}")
 
+    with st.expander("Methodology & caveats"):
+        st.markdown(
+            "- Correlation and regression here are **suggestive, not causal** — "
+            "a significant lagged relationship says the driver and demand move "
+            "together at that lag, not that one causes the other.\n"
+            "- With roughly a year of weekly data and several lagged drivers, "
+            "these models are easy to overfit — prefer fewer, better-justified "
+            "lags (e.g. the one `lagged_cross_correlation` already flagged).\n"
+            "- Weekly demand is heavily autocorrelated, so these are in-sample "
+            "fits, not validated forecasts.\n"
+            "- Confirm anything interesting with matched-baseline event studies "
+            "planned for Phase 2."
+        )
+
+
+def main() -> None:
+    st.title("population-pulse")
     st.caption(
-        "Reminder: correlation and regression here are suggestive, not causal. "
-        "Confirm with matched-baseline event studies planned for Phase 2."
+        "Do population surges — events, weather, disease — correlate with "
+        "hospital ED demand? Phase 1: descriptive exploration."
     )
+
+    with st.sidebar:
+        city = st.selectbox("City", ["boston"], index=0)
+        st.markdown("**Date range**")
+        default_end = pd.Timestamp.now(tz="UTC").normalize()
+        default_start = default_end - pd.Timedelta(days=365)
+        start_date = st.date_input("From", value=default_start.date())
+        end_date = st.date_input("To", value=default_end.date())
+        st.markdown("---")
+        st.caption(
+            "Data refreshes daily via GitHub Actions. "
+            "No API keys are needed to view this dashboard."
+        )
+
+    with st.spinner("Loading data…"):
+        try:
+            raw_signals = _load_signals(city)
+        except Exception as exc:
+            st.error(f"Could not load data: {exc}")
+            st.info(
+                "For local development run: "
+                "`python -m src.ingestion.make_samples`"
+            )
+            return
+
+    start_ts = pd.Timestamp(start_date, tz="UTC")
+    end_ts = pd.Timestamp(end_date, tz="UTC")
+    signals = _filter_by_date(raw_signals, start_ts, end_ts)
+
+    all_empty = all(v.empty for v in signals.values())
+    if all_empty:
+        st.warning(
+            "No data available yet. "
+            "The GitHub Actions pipeline runs daily — check back after the first run, "
+            "or run `python -m src.ingestion.run --city boston` locally."
+        )
+        return
+
+    numeric_signals = _build_numeric_signals(signals)
+    aligned = align(numeric_signals, resolution="W")
+    if aligned.empty:
+        st.warning("No numeric signals to display for this date range.")
+        return
+
+    tab_overview, tab_timeline, tab_corr = st.tabs(
+        ["Overview", "Timeline", "Correlation & Regression"]
+    )
+
+    with tab_overview:
+        _render_overview(aligned, raw_signals, signals)
+
+    with tab_timeline:
+        _render_timeline(aligned, signals.get("events", pd.DataFrame()))
+
+    with tab_corr:
+        _render_correlation_and_regression(aligned)
 
 
 if __name__ == "__main__":
