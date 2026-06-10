@@ -168,16 +168,54 @@ on the same data shows neither pathogen significant once the AIC is corrected
 for overdispersion. Lesson: **don't trust a Poisson p-value on real syndromic
 count data** — always compare against `family="negative_binomial"`.
 
+### The other three sub-hypotheses, on real data
+
+The wastewater result above is the strongest because it has the longest
+real-data history (~3.5 years). The other three drivers are now also tested
+against real data — at lag 0–5 weeks, picked by `lagged_cross_correlation`,
+then fit with `fit_logistic_regression` (surge AUC-ROC) and
+`fit_count_regression` (Poisson vs. Negative-Binomial):
+
+| Driver | Real-data window | Weeks | Best lag | Surge AUC-ROC (p) | Poisson AIC | NB AIC | NB p-value |
+|---|---|---|---|---|---|---|---|
+| Academic calendar (large gatherings) | Aug 2024 – May 2026 | 81 | 0 | 0.64 (p=0.048) | 60,771 | 1,632 | 0.65 |
+| Transit (commute) | Jun 2025 – May 2026 | 47 | 0 | 0.59 (p=0.195) | 30,744 | 934 | 0.54 |
+| Weather (temperature) | Jun 2025 – May 2026 | 48 | 2 | 0.59 (p=0.391) | 18,376 | 952 | 0.12 |
+
+**Same Poisson-vs-NB gap, every time:** Poisson AIC is 19–37x worse than
+Negative-Binomial across all three drivers — the overdispersion lesson from
+the wastewater section isn't a one-off, it's structural to this dataset.
+Once corrected, **none of the three reach significance** in the NB count
+model. The academic-calendar surge logistic regression is borderline
+(p=0.048, AUC=0.64) but with only 81 weeks and one borderline p-value among
+several tests, this is not strong enough to call a finding — it's a thread
+worth re-checking once more terms of academic-calendar history accumulate.
+Weather's NB p-value (0.12) is the next-closest, consistent with a real but
+sub-significant cold-weather effect at a 2-week lag.
+
+**Why these windows are so much shorter than wastewater's:** transit and
+weather have no historical-archive fallback exercised in this environment —
+their real data is whatever the daily GitHub Actions run has accumulated on
+the `data` branch (a rolling ~1 year), not a one-time deep backfill like
+WastewaterSCAN (2022–present) or MA DPH (2019–present). A longer real-data
+backfill for transit/weather would need to run from an environment with
+unrestricted network access (see "Known limitations").
+
+**Events couldn't be tested at all:** Ticketmaster and Boston.gov civic
+events are *upcoming-events* APIs (rolling ~365 days forward), so the
+`events` signal on the `data` branch has zero date overlap with historical
+`hospital_demand` — there is currently no way to backtest the
+large-gatherings hypothesis against *event-level* data, only against the
+academic-calendar population proxy above. Event-level backtesting would
+need each day's events archived going forward (a job for Phase 2's matched-
+baseline event studies, which need exact event dates anyway).
+
 ---
 
 ## Known limitations
 
 In the spirit of an honest status report, not just a feature list:
 
-- **Weather has no fallback tier.** Every other signal degrades to a synthetic
-  sample if its real source is unreachable (the project's stated convention);
-  `weather.py` doesn't — if Open-Meteo is down or blocked, `run.py` catches
-  the exception and `weather.parquet` is simply not written for that run.
 - **The MWRA wastewater fallback has never run against live data.** Its
   machine-readable export URL moves over time and `wastewater.mwra.data_url`
   has never been set, so that tier is unexercised code. WastewaterSCAN (Tier
@@ -190,19 +228,28 @@ In the spirit of an honest status report, not just a feature list:
 - **`src/ingestion/eventbrite.py` is dead code.** It was superseded by
   `civic_events.py` (Boston.gov) but the file, its `.env.example` entry, and
   its GitHub Actions secret are still present and unused by `BostonProvider`.
-- **The regression module isn't wired into the dashboard yet.** `correlate.py`
-  (cross-correlation) drives the Streamlit UI; `regression.py` (count
-  regression + the surge logistic regression above) is currently
-  analysis-only, run via ad-hoc scripts against the Parquet data.
 - **Second city is unbuilt.** The `CityDataProvider` abstraction is designed
   to make a second city "one YAML + one provider class," but that claim has
   never actually been tested against a real second city.
 - **Live-API fetchers are tested against mocked payloads, not real endpoints,
   in development.** The sandbox's network allowlist returns 403 for most data
-  hosts (Ticketmaster, MBTA ArcGIS, mass.gov), so `pytest` covers these with
-  captured payloads and the daily GitHub Actions run (full network access) is
-  the actual integration test — confirmed working: the `data` branch has 1,950
-  rows of real MBTA gated-entry ridership and 596 real events.
+  hosts (Ticketmaster, MBTA ArcGIS, mass.gov, Open-Meteo), so `pytest` covers
+  these with captured payloads and the daily GitHub Actions run (full network
+  access) is the actual integration test — confirmed working: the `data`
+  branch has 1,950 rows of real MBTA gated-entry ridership and 596 real
+  events.
+- **Transit and weather only have a rolling ~1 year of real history.** Unlike
+  wastewater (WastewaterSCAN, 2022–present) and hospital demand (MA DPH,
+  2019–present), neither MBTA's historical ridership nor Open-Meteo's archive
+  has been backfilled beyond what the daily GitHub Actions run accumulates on
+  the `data` branch. See "The other three sub-hypotheses, on real data" above
+  — a deeper backfill needs to run somewhere with unrestricted network access.
+- **Events have zero overlap with historical hospital demand.** Ticketmaster
+  and Boston.gov civic events are upcoming-events APIs (rolling ~365 days
+  forward), so the `events` signal can't currently be backtested against
+  past `hospital_demand` at all — only the academic-calendar population proxy
+  can. Phase 2's matched-baseline event studies will need each day's events
+  archived going forward to fix this.
 
 ---
 
@@ -210,12 +257,12 @@ In the spirit of an honest status report, not just a feature list:
 
 | Component | Status |
 |-----------|--------|
-| Ingestion pipeline | Working — transit, weather, events, academic calendar, wastewater, hospital demand |
+| Ingestion pipeline | Working — transit, weather, events, academic calendar, wastewater, hospital demand. All six signals have a sample-data fallback. |
 | Daily GitHub Actions | Working (no PR-level CI — see Known limitations) |
-| Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series |
+| Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series, lagged regression panel |
 | Cross-correlation analysis | Working — `src/analysis/correlate.py`, used by the dashboard |
-| Count + surge regression | Working, analysis-only — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC) |
-| Test suite | 54 tests, all passing |
+| Count + surge regression | Working, in the dashboard — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC), tested against real data for all four sub-hypotheses |
+| Test suite | 56 tests, all passing |
 | Phase 2 event studies | Planned |
 | Second city | Architecture ready, untested |
 
