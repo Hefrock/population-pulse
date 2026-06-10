@@ -47,11 +47,6 @@ transit:
     - Green-C
     - Green-D
     - Green-E
-  # Stations near major venues — useful for event-impact analysis later.
-  venue_stations:
-    td_garden: place-north        # North Station (Celtics, Bruins, concerts)
-    fenway: place-kencl           # Kenmore (Red Sox, Fenway concerts)
-    bcec: place-wtcst             # World Trade Center (conventions)
 
 weather:
   provider: open_meteo
@@ -160,9 +155,3 @@ hospital_demand:
   # Environmental hospitalizations (asthma, heat stress, COPD, CO, MI) directly
   # support the weather/seasonal sub-hypothesis.
   environmental_url: https://www.mass.gov/info-details/environmental-hospitalization-data
-
-hospital_locations:
-  # Static reference layer (MassGIS acute care hospitals) for geographic
-  # matching of flow signals to nearby EDs.
-  provider: massgis
-  layer: acute_care_hospitals

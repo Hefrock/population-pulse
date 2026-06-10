@@ -1,14 +1,13 @@
-"""Events fetcher.
+"""Manual events CSV fetcher.
 
-Phase 1 deliberately uses a hand-maintained CSV of known large gatherings. This
-gives us clean, precisely-dated events — the cleanest signal for testing the
-large-gatherings sub-hypothesis — without scraping fragile venue calendars yet.
+Loads the hand-curated CSV of known large gatherings — clean, precisely-dated
+events for the large-gatherings sub-hypothesis. This is one of three event
+sources merged in src/providers/boston.py: Ticketmaster (ticketmaster.py) and
+Boston.gov civic events (civic_events.py) cover automated venue-calendar and
+ticketing data; this manual CSV is the baseline.
 
 The CSV (``data/boston_events.csv``) has columns:
     date, venue, name, expected_attendance
-
-Phase 2 TODO: replace/augment with automated venue-calendar ingestion (TD
-Garden, Fenway, BCEC) and possibly a ticketing API.
 """
 
 from __future__ import annotations
