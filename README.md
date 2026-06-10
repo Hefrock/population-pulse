@@ -15,12 +15,12 @@ This project builds a data pipeline and dashboard to explore that question for B
 ## What it does
 
 1. **Ingests six signals daily** via GitHub Actions:
-   - Transit volume (MBTA gated station entries — historical daily ridership)
+   - Transit volume (MBTA gated station entries — historical daily ridership, 2014–present)
    - Weather (temperature, apparent temperature, precipitation)
    - Events (Sports and Music events via Ticketmaster; civic events via Boston.gov)
    - Academic calendar (student population in/out of the city — ~150K students across 8 universities)
-   - Wastewater viral surveillance (SARS-CoV-2, Influenza A, RSV — the leading indicator of respiratory demand)
-   - Hospital demand (CDC FluView ILI patient counts; upgradeable to MA DPH ED data)
+   - Wastewater viral surveillance (SARS-CoV-2, Influenza A/B, RSV — real Deer Island data via WastewaterSCAN, the leading indicator of respiratory demand)
+   - Hospital demand (MA DPH weekly ED visits + admissions, 2019–present — the dependent variable; CDC FluView ILI is the automated fallback)
 
 2. **Stores data on a `data` branch** — the dashboard reads from there, so the app has no secrets or API calls of its own.
 
@@ -55,12 +55,13 @@ These are analyzed separately because they'd confound each other in a single cor
 | Events | Ticketmaster Discovery API | Upcoming, rolling 365 days | Free — `developer.ticketmaster.com` |
 | Events (civic) | Boston.gov public calendar (Drupal JSON:API) | Upcoming, rolling 365 days | None |
 | Academic calendar | Curated term dates (8 universities), validated against registrars | Per semester | None — curated CSV |
-| Wastewater (SARS-CoV-2) | MWRA Deer Island / Biobot (metro-Boston) | ~Daily | None |
-| Wastewater (SARS-CoV-2, Flu A, RSV) | CDC NWSS Wastewater Viral Activity Level (Socrata) | Weekly | None |
-| Hospital demand | CDC FluView via Delphi Epidata | Weekly ILI counts | None |
-| Hospital demand (active) | MA DPH Respiratory Dashboard | Weekly ED visits + admissions | Manual download |
+| Wastewater (SARS-CoV-2, Flu A/B, RSV) | WastewaterSCAN (Stanford/Emory), Deer Island plant | Twice-weekly, 2022–present | None (undocumented public endpoint) |
+| Wastewater (fallback, SARS-CoV-2) | MWRA Deer Island / Biobot (metro-Boston) | ~Daily | None — needs `data_url` set, see below |
+| Wastewater (fallback, multi-pathogen) | CDC NWSS Wastewater Viral Activity Level (Socrata) | Weekly | None |
+| Hospital demand | MA DPH Respiratory Dashboard ("Visits by week") | Weekly ED visits + admissions, 2019–present | Manual download |
+| Hospital demand (fallback) | CDC FluView via Delphi Epidata | Weekly ILI counts | None |
 
-**On hospital data:** `data/ma_dph_respiratory.csv` (statewide weekly ED visits and admissions for "broad acute respiratory" diagnoses, 2019–present) is checked in and is the pipeline's Tier 1 — CDC FluView's ILI proxy is now only a fallback. To refresh it, download the current "Respiratory Disease Reporting" workbook from [mass.gov/info-details/weekly-flu-report](https://www.mass.gov/info-details/weekly-flu-report) (its "Visits by week" sheet covers all prior seasons) and run:
+**On hospital data:** `data/ma_dph_respiratory.csv` (statewide weekly ED visits and admissions for "broad acute respiratory" diagnoses, 2019–present, 722 rows) is checked in and is the pipeline's Tier 1 — CDC FluView's ILI proxy is now only a fallback. To refresh it, download the current "Respiratory Disease Reporting" workbook from [mass.gov/info-details/weekly-flu-report](https://www.mass.gov/info-details/weekly-flu-report) (its "Visits by week" sheet covers all prior seasons) and run:
 
 ```bash
 python scripts/build_ma_dph_csv.py path/to/RespiratoryDiseaseReporting*.xlsx
@@ -68,7 +69,7 @@ python scripts/build_ma_dph_csv.py path/to/RespiratoryDiseaseReporting*.xlsx
 
 **On the academic calendar:** there is no API for university term dates, so `data/boston_academic_calendar.csv` is a hand-curated reference (the same "manual baseline" pattern as the events CSV). Term dates are validated against each school's registrar and carry a `source` column (`verified-*`, `estimate`, or `prior-year-pattern`); refresh it ~10 minutes once a year when schools publish their next calendar.
 
-**On wastewater:** SARS-CoV-2 is metro-Boston via MWRA; Influenza A and RSV come from CDC NWSS (Massachusetts statewide), since MWRA's public feed is COVID-only. The fetcher prefers MWRA for SARS-CoV-2 and fills the rest from CDC NWSS, falling back to a synthetic sample offline. **One production touch-up:** MWRA's machine-readable export URL moves over time, so set `wastewater.mwra.data_url` in `cities/boston.yaml` to the current CSV to light up the metro-Boston tier (SARS-CoV-2 flows from CDC NWSS until then).
+**On wastewater:** [WastewaterSCAN](https://www.wastewaterscan.org/) publishes real twice-weekly viral concentrations for the Deer Island (metro-Boston) plant back to December 2022, covering all four target pathogens — this is now Tier 1 and is the source behind the correlation results below. It's reached through an undocumented-but-public JSON endpoint (no key, but no SLA either), so MWRA and CDC NWSS remain as fallbacks if it goes away. MWRA's tier is currently inert in practice — its machine-readable export URL moves over time and `wastewater.mwra.data_url` has never been set in `cities/boston.yaml`, so that fallback has not actually been exercised against live data.
 
 **Note:** Real-time, hospital-specific bed counts are not publicly available. Weekly syndromic data sets the natural time resolution of the analysis.
 
@@ -116,9 +117,9 @@ population-pulse/
 │   ├── providers/       # abstract base + city implementations
 │   ├── ingestion/       # source fetchers (mbta, weather, ticketmaster,
 │   │                    #   academic_calendar, wastewater, ...)
-│   ├── analysis/        # timeline alignment + lagged correlation
+│   ├── analysis/        # timeline alignment, lagged correlation, count/surge regression
 │   └── dashboard/       # Streamlit app
-├── tests/               # pytest suite (38 tests)
+├── tests/               # pytest suite (54 tests)
 ├── docs/                # narrated walkthrough
 └── .github/workflows/   # daily ingestion + test gate
 ```
@@ -135,16 +136,88 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 
 ---
 
+## What we've found so far
+
+This is the honest result of running the pipeline end-to-end on ~3.5 years of
+real data (WastewaterSCAN wastewater + MA DPH ED visits, Dec 2022 – May 2026,
+~180 weekly observations). `src/analysis/regression.py` turns each week into a
+binary "surge" label (deseasonalized ED-visit residual in the top quartile —
+i.e. running hot *for that time of year*) and fits a logistic regression of
+each wastewater pathogen against it:
+
+| Pathogen | Best lag | AUC-ROC | p-value |
+|---|---|---|---|
+| Influenza A | 0 weeks | 0.68 | 0.0007 |
+| RSV | 0 weeks | 0.67 | 0.0002 (significant out to +3 weeks) |
+| SARS-CoV-2 | — | ~0.5–0.6 | not significant at any lag 0–8 |
+
+**Reads as a real, modest signal:** same-week Influenza A and RSV wastewater
+levels meaningfully separate "surge" from "normal" weeks (0.5 = chance), each
+individually significant. RSV's signal persists for a few weeks, which is at
+least directionally consistent with the "wastewater leads clinical demand"
+hypothesis, though "lag 0" at weekly resolution doesn't prove a multi-day
+lead. SARS-CoV-2 wastewater shows nothing useful for surge prediction in this
+window — a negative result, not a bug.
+
+**A methodology lesson that's now baked into the code:** the same drivers fit
+with a Poisson GLM (`fit_count_regression(..., family="poisson")`) come out
+*highly* "significant" (p≈0) with an AIC an order of magnitude worse than the
+Negative-Binomial fit, because weekly ED-visit counts are heavily
+overdispersed and Poisson assumes variance = mean. The Negative-Binomial fit
+on the same data shows neither pathogen significant once the AIC is corrected
+for overdispersion. Lesson: **don't trust a Poisson p-value on real syndromic
+count data** — always compare against `family="negative_binomial"`.
+
+---
+
+## Known limitations
+
+In the spirit of an honest status report, not just a feature list:
+
+- **Weather has no fallback tier.** Every other signal degrades to a synthetic
+  sample if its real source is unreachable (the project's stated convention);
+  `weather.py` doesn't — if Open-Meteo is down or blocked, `run.py` catches
+  the exception and `weather.parquet` is simply not written for that run.
+- **The MWRA wastewater fallback has never run against live data.** Its
+  machine-readable export URL moves over time and `wastewater.mwra.data_url`
+  has never been set, so that tier is unexercised code. WastewaterSCAN (Tier
+  1) covers all four pathogens, so this is low-priority — but it's not the
+  "tested fallback" the docstrings imply.
+- **No CI runs on pull requests.** The only workflow (`ingest.yml`) triggers
+  on `schedule` / `workflow_dispatch`; its `pytest tests/ -v` job gates the
+  daily ingestion run on `main`, but a PR branch gets no automated test
+  feedback before merge.
+- **`src/ingestion/eventbrite.py` is dead code.** It was superseded by
+  `civic_events.py` (Boston.gov) but the file, its `.env.example` entry, and
+  its GitHub Actions secret are still present and unused by `BostonProvider`.
+- **The regression module isn't wired into the dashboard yet.** `correlate.py`
+  (cross-correlation) drives the Streamlit UI; `regression.py` (count
+  regression + the surge logistic regression above) is currently
+  analysis-only, run via ad-hoc scripts against the Parquet data.
+- **Second city is unbuilt.** The `CityDataProvider` abstraction is designed
+  to make a second city "one YAML + one provider class," but that claim has
+  never actually been tested against a real second city.
+- **Live-API fetchers are tested against mocked payloads, not real endpoints,
+  in development.** The sandbox's network allowlist returns 403 for most data
+  hosts (Ticketmaster, MBTA ArcGIS, mass.gov), so `pytest` covers these with
+  captured payloads and the daily GitHub Actions run (full network access) is
+  the actual integration test — confirmed working: the `data` branch has 1,950
+  rows of real MBTA gated-entry ridership and 596 real events.
+
+---
+
 ## Project status
 
 | Component | Status |
 |-----------|--------|
 | Ingestion pipeline | Working — transit, weather, events, academic calendar, wastewater, hospital demand |
-| Daily GitHub Actions | Working |
+| Daily GitHub Actions | Working (no PR-level CI — see Known limitations) |
 | Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series |
-| Test suite | 38 tests, all passing |
+| Cross-correlation analysis | Working — `src/analysis/correlate.py`, used by the dashboard |
+| Count + surge regression | Working, analysis-only — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC) |
+| Test suite | 54 tests, all passing |
 | Phase 2 event studies | Planned |
-| Second city | Architecture ready |
+| Second city | Architecture ready, untested |
 
 ---
 
