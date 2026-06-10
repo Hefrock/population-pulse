@@ -166,17 +166,3 @@ hospital_locations:
   # matching of flow signals to nearby EDs.
   provider: massgis
   layer: acute_care_hospitals
-
-# --- Analysis defaults -------------------------------------------------------
-
-analysis:
-  # Common resolution everything is aggregated/resampled to. Weekly is forced by
-  # the hospital data; daily is available for the flow signals and used in
-  # Phase 2 event studies.
-  base_resolution: weekly
-  # Lag windows (in days) to scan for each sub-hypothesis in cross-correlation.
-  lag_windows:
-    large_gatherings: [0, 3]
-    weather: [0, 5]
-    disease: [0, 14]
-    commute: [0, 1]

@@ -119,9 +119,9 @@ population-pulse/
 │   │                    #   academic_calendar, wastewater, ...)
 │   ├── analysis/        # timeline alignment, lagged correlation, count/surge regression
 │   └── dashboard/       # Streamlit app
-├── tests/               # pytest suite (54 tests)
+├── tests/               # pytest suite (56 tests)
 ├── docs/                # narrated walkthrough
-└── .github/workflows/   # daily ingestion + test gate
+└── .github/workflows/   # daily ingestion + PR test gate
 ```
 
 **Tech stack:** Python, pandas, scipy/statsmodels, Streamlit, Parquet, GitHub Actions.
@@ -221,13 +221,6 @@ In the spirit of an honest status report, not just a feature list:
   has never been set, so that tier is unexercised code. WastewaterSCAN (Tier
   1) covers all four pathogens, so this is low-priority — but it's not the
   "tested fallback" the docstrings imply.
-- **No CI runs on pull requests.** The only workflow (`ingest.yml`) triggers
-  on `schedule` / `workflow_dispatch`; its `pytest tests/ -v` job gates the
-  daily ingestion run on `main`, but a PR branch gets no automated test
-  feedback before merge.
-- **`src/ingestion/eventbrite.py` is dead code.** It was superseded by
-  `civic_events.py` (Boston.gov) but the file, its `.env.example` entry, and
-  its GitHub Actions secret are still present and unused by `BostonProvider`.
 - **Second city is unbuilt.** The `CityDataProvider` abstraction is designed
   to make a second city "one YAML + one provider class," but that claim has
   never actually been tested against a real second city.
@@ -258,7 +251,7 @@ In the spirit of an honest status report, not just a feature list:
 | Component | Status |
 |-----------|--------|
 | Ingestion pipeline | Working — transit, weather, events, academic calendar, wastewater, hospital demand. All six signals have a sample-data fallback. |
-| Daily GitHub Actions | Working (no PR-level CI — see Known limitations) |
+| Daily GitHub Actions | Working — daily ingestion (`ingest.yml`) + PR test gate (`test.yml`) |
 | Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series, lagged regression panel |
 | Cross-correlation analysis | Working — `src/analysis/correlate.py`, used by the dashboard |
 | Count + surge regression | Working, in the dashboard — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC), tested against real data for all four sub-hypotheses |

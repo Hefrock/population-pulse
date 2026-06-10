@@ -54,10 +54,10 @@ src/ingestion/make_samples.py  # synthetic data with planted signals for offline
 `hospital_demand` is the **dependent variable**; everything else is a driver.
 
 See README's "Known limitations" for the current honest list of gaps (MWRA
-wastewater fallback is unexercised, `eventbrite.py` is dead code, no PR-level
-CI, transit/weather only have ~1 year of real history, events have zero
-overlap with historical hospital demand, second city untested). Worth fixing
-opportunistically, but don't let them block unrelated work.
+wastewater fallback is unexercised, transit/weather only have ~1 year of real
+history, events have zero overlap with historical hospital demand, second
+city untested). Worth fixing opportunistically, but don't let them block
+unrelated work.
 
 ## Conventions to follow
 
