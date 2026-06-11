@@ -25,7 +25,7 @@ pip install -r requirements.txt              # deps
 python -m src.ingestion.make_samples          # regenerate synthetic sample data
 python -m src.ingestion.run --city boston     # full ingest (writes data/boston/*.parquet)
 streamlit run src/dashboard/app.py            # dashboard
-pytest tests/ -q                              # test suite (currently 56)
+pytest tests/ -q                              # test suite (currently 67)
 ```
 
 `run.py` accepts `--start`/`--end` (ISO dates); default is the trailing 365 days.

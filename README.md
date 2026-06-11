@@ -1,5 +1,10 @@
 # population-pulse
 
+[![Tests](https://github.com/hefrock/population-pulse/actions/workflows/test.yml/badge.svg)](https://github.com/hefrock/population-pulse/actions/workflows/test.yml)
+[![Daily Ingestion](https://github.com/hefrock/population-pulse/actions/workflows/ingest.yml/badge.svg)](https://github.com/hefrock/population-pulse/actions/workflows/ingest.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](requirements.txt)
+
 **Does a city's population activity — events, weather, disease — predict pressure on hospital emergency departments?**
 
 This project builds a data pipeline and dashboard to explore that question for Boston, with the architecture ready for other cities. It ingests real signals daily, aligns them on a common timeline, and lets you run lagged correlation analysis between any driver signal and hospital demand.
@@ -10,6 +15,22 @@ fallback) — not all-cause hospital demand. Predicting *overall* hospital deman
 the long-term goal of this project; until an all-cause source is added, every
 "hospital demand" result here (charts, dashboard, correlations below) is a
 respiratory-demand proxy. See "Known limitations" for details.
+
+---
+
+## Contents
+
+- [Live dashboard](#live-dashboard)
+- [What it does](#what-it-does)
+- [The hypothesis](#the-hypothesis)
+- [Data sources](#data-sources)
+- [Quickstart (local development)](#quickstart-local-development)
+- [Automated pipeline](#automated-pipeline)
+- [Architecture](#architecture)
+- [Interpreting results](#interpreting-results)
+- [What we've found so far](#what-weve-found-so-far)
+- [Known limitations](#known-limitations)
+- [Project status](#project-status)
 
 ---
 
@@ -126,7 +147,7 @@ population-pulse/
 │   │                    #   academic_calendar, wastewater, ...)
 │   ├── analysis/        # timeline alignment, lagged correlation, count/surge regression
 │   └── dashboard/       # Streamlit app
-├── tests/               # pytest suite (56 tests)
+├── tests/               # pytest suite (67 tests)
 ├── docs/                # narrated walkthrough
 └── .github/workflows/   # daily ingestion + PR test gate
 ```
@@ -144,6 +165,14 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 ---
 
 ## What we've found so far
+
+**tl;dr:** Wastewater Influenza A and RSV levels (same week, lag 0) are real,
+modest predictors of a respiratory ED "surge" week (AUC-ROC 0.67–0.68, both
+p<0.01) — the project's strongest result so far. The other three drivers
+(events/academic calendar, transit, weather) show nothing that survives
+correction for overdispersion in the count models, mostly because their
+real-data windows are still short (47–81 weeks vs. wastewater's ~180). Details
+and caveats below.
 
 This is the honest result of running the pipeline end-to-end on ~3.5 years of
 real data (WastewaterSCAN wastewater + MA DPH respiratory ED visits, Dec 2022 –
@@ -288,7 +317,7 @@ In the spirit of an honest status report, not just a feature list:
 | Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series, lagged regression panel |
 | Cross-correlation analysis | Working — `src/analysis/correlate.py`, used by the dashboard |
 | Count + surge regression | Working, in the dashboard — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC), tested against real data for all four sub-hypotheses |
-| Test suite | 56 tests, all passing |
+| Test suite | 67 tests, all passing |
 | Phase 2 event studies | Planned |
 | Second city | Architecture ready, untested |
 
