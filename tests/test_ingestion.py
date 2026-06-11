@@ -225,6 +225,48 @@ def test_civic_events_parses_drupal_jsonapi(monkeypatch):
     assert df["source"].iloc[0] == "boston_gov"
 
 
+def test_civic_events_does_not_send_sort_param(monkeypatch):
+    """Drupal returns 400 Bad Request for sort=field_event_date_recur_value
+    in production -- the request must not include a 'sort' param at all."""
+    from src.ingestion import civic_events
+
+    captured = {}
+
+    def fake_get(url, params=None, timeout=None):
+        captured.update(params or {})
+        return _FakeResp({"data": [], "links": {}})
+
+    monkeypatch.setattr(civic_events.requests, "get", fake_get)
+    civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
+        timezone="America/New_York",
+    )
+    assert "sort" not in captured
+
+
+def test_civic_events_400_response_returns_empty(monkeypatch):
+    """A 400 from Drupal JSON:API (e.g. an unsortable field) fails soft."""
+    import requests as req
+    from src.ingestion import civic_events
+
+    class _BadResp(_FakeResp):
+        def raise_for_status(self):
+            raise req.HTTPError("400 Client Error: Bad Request")
+
+    monkeypatch.setattr(
+        civic_events.requests, "get",
+        lambda *a, **k: _BadResp({"data": [], "links": {}}),
+    )
+    df = civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
+        timezone="America/New_York",
+    )
+    assert df.empty
+    assert list(df.columns) == ["timestamp", "venue", "name", "expected_attendance", "source"]
+
+
 def test_ticketmaster_uses_classificationname(monkeypatch):
     """fetch_events sends classificationName (not segmentName) to the API."""
     import os

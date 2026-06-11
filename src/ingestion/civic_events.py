@@ -62,7 +62,6 @@ def fetch_events(
                 f"{base_url}/jsonapi/node/event",
                 params={
                     "filter[status]": "1",
-                    "sort": "field_event_date_recur_value",
                     "page[limit]": PAGE_LIMIT,
                     "page[offset]": offset,
                 },
@@ -117,7 +116,7 @@ def fetch_events(
         print("[boston_gov] No upcoming civic events found.")
         return _empty_frame()
 
-    df = pd.DataFrame(rows).reset_index(drop=True)
+    df = pd.DataFrame(rows).sort_values("timestamp").reset_index(drop=True)
     print(f"[boston_gov] {len(df)} upcoming civic events fetched.")
     return df
 
