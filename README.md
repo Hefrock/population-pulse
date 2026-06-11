@@ -1,8 +1,36 @@
 # population-pulse
 
+[![Tests](https://github.com/hefrock/population-pulse/actions/workflows/test.yml/badge.svg)](https://github.com/hefrock/population-pulse/actions/workflows/test.yml)
+[![Daily Ingestion](https://github.com/hefrock/population-pulse/actions/workflows/ingest.yml/badge.svg)](https://github.com/hefrock/population-pulse/actions/workflows/ingest.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](requirements.txt)
+
 **Does a city's population activity — events, weather, disease — predict pressure on hospital emergency departments?**
 
 This project builds a data pipeline and dashboard to explore that question for Boston, with the architecture ready for other cities. It ingests real signals daily, aligns them on a common timeline, and lets you run lagged correlation analysis between any driver signal and hospital demand.
+
+**Current scope:** the only real `hospital_demand` data available today is
+**respiratory-illness** ED visits/admissions (MA DPH, with CDC FluView ILI as a
+fallback) — not all-cause hospital demand. Predicting *overall* hospital demand is
+the long-term goal of this project; until an all-cause source is added, every
+"hospital demand" result here (charts, dashboard, correlations below) is a
+respiratory-demand proxy. See "Known limitations" for details.
+
+---
+
+## Contents
+
+- [Live dashboard](#live-dashboard)
+- [What it does](#what-it-does)
+- [The hypothesis](#the-hypothesis)
+- [Data sources](#data-sources)
+- [Quickstart (local development)](#quickstart-local-development)
+- [Automated pipeline](#automated-pipeline)
+- [Architecture](#architecture)
+- [Interpreting results](#interpreting-results)
+- [What we've found so far](#what-weve-found-so-far)
+- [Known limitations](#known-limitations)
+- [Project status](#project-status)
 
 ---
 
@@ -20,7 +48,7 @@ This project builds a data pipeline and dashboard to explore that question for B
    - Events (Sports and Music events via Ticketmaster; civic events via Boston.gov)
    - Academic calendar (student population in/out of the city — ~150K students across 8 universities)
    - Wastewater viral surveillance (SARS-CoV-2, Influenza A/B, RSV — real Deer Island data via WastewaterSCAN, the leading indicator of respiratory demand)
-   - Hospital demand (MA DPH weekly ED visits + admissions, 2019–present — the dependent variable; CDC FluView ILI is the automated fallback)
+   - Hospital demand — **respiratory-illness** ED visits + admissions (MA DPH weekly data, 2019–present — the dependent variable; CDC FluView ILI is the automated fallback). Not all-cause hospital demand; see "Known limitations"
 
 2. **Stores data on a `data` branch** — the dashboard reads from there, so the app has no secrets or API calls of its own.
 
@@ -58,7 +86,7 @@ These are analyzed separately because they'd confound each other in a single cor
 | Wastewater (SARS-CoV-2, Flu A/B, RSV) | WastewaterSCAN (Stanford/Emory), Deer Island plant | Twice-weekly, 2022–present | None (undocumented public endpoint) |
 | Wastewater (fallback, SARS-CoV-2) | MWRA Deer Island / Biobot (metro-Boston) | ~Daily | None — needs `data_url` set, see below |
 | Wastewater (fallback, multi-pathogen) | CDC NWSS Wastewater Viral Activity Level (Socrata) | Weekly | None |
-| Hospital demand | MA DPH Respiratory Dashboard ("Visits by week") | Weekly ED visits + admissions, 2019–present | Manual download |
+| Hospital demand (respiratory-illness only) | MA DPH Respiratory Dashboard ("Visits by week") | Weekly ED visits + admissions, 2019–present | Manual download |
 | Hospital demand (fallback) | CDC FluView via Delphi Epidata | Weekly ILI counts | None |
 
 **On hospital data:** `data/ma_dph_respiratory.csv` (statewide weekly ED visits and admissions for "broad acute respiratory" diagnoses, 2019–present, 722 rows) is checked in and is the pipeline's Tier 1 — CDC FluView's ILI proxy is now only a fallback. To refresh it, download the current "Respiratory Disease Reporting" workbook from [mass.gov/info-details/weekly-flu-report](https://www.mass.gov/info-details/weekly-flu-report) (its "Visits by week" sheet covers all prior seasons) and run:
@@ -119,7 +147,7 @@ population-pulse/
 │   │                    #   academic_calendar, wastewater, ...)
 │   ├── analysis/        # timeline alignment, lagged correlation, count/surge regression
 │   └── dashboard/       # Streamlit app
-├── tests/               # pytest suite (56 tests)
+├── tests/               # pytest suite (67 tests)
 ├── docs/                # narrated walkthrough
 └── .github/workflows/   # daily ingestion + PR test gate
 ```
@@ -138,12 +166,20 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 
 ## What we've found so far
 
+**tl;dr:** Wastewater Influenza A and RSV levels (same week, lag 0) are real,
+modest predictors of a respiratory ED "surge" week (AUC-ROC 0.67–0.68, both
+p<0.01) — the project's strongest result so far. The other three drivers
+(events/academic calendar, transit, weather) show nothing that survives
+correction for overdispersion in the count models, mostly because their
+real-data windows are still short (47–81 weeks vs. wastewater's ~180). Details
+and caveats below.
+
 This is the honest result of running the pipeline end-to-end on ~3.5 years of
-real data (WastewaterSCAN wastewater + MA DPH ED visits, Dec 2022 – May 2026,
-~180 weekly observations). `src/analysis/regression.py` turns each week into a
-binary "surge" label (deseasonalized ED-visit residual in the top quartile —
-i.e. running hot *for that time of year*) and fits a logistic regression of
-each wastewater pathogen against it:
+real data (WastewaterSCAN wastewater + MA DPH respiratory ED visits, Dec 2022 –
+May 2026, ~180 weekly observations). `src/analysis/regression.py` turns each
+week into a binary "surge" label (deseasonalized respiratory ED-visit residual
+in the top quartile — i.e. running hot *for that time of year*) and fits a
+logistic regression of each wastewater pathogen against it:
 
 | Pathogen | Best lag | AUC-ROC | p-value |
 |---|---|---|---|
@@ -201,14 +237,19 @@ WastewaterSCAN (2022–present) or MA DPH (2019–present). A longer real-data
 backfill for transit/weather would need to run from an environment with
 unrestricted network access (see "Known limitations").
 
-**Events couldn't be tested at all:** Ticketmaster and Boston.gov civic
-events are *upcoming-events* APIs (rolling ~365 days forward), so the
-`events` signal on the `data` branch has zero date overlap with historical
-`hospital_demand` — there is currently no way to backtest the
-large-gatherings hypothesis against *event-level* data, only against the
-academic-calendar population proxy above. Event-level backtesting would
-need each day's events archived going forward (a job for Phase 2's matched-
-baseline event studies, which need exact event dates anyway).
+**Events couldn't be tested at all, but the gap is now closing:**
+Ticketmaster and Boston.gov civic events are *upcoming-events* APIs (rolling
+~365 days forward), so any single day's `events` snapshot has zero date
+overlap with historical `hospital_demand` — there is currently no way to
+backtest the large-gatherings hypothesis against *event-level* data, only
+against the academic-calendar population proxy above. `run.py` now also
+maintains `events_archive.parquet`: each day's snapshot is folded into a
+running history (deduplicated by date + event name) instead of being
+overwritten, so real event-level overlap with `hospital_demand` accumulates
+at roughly a year per year of daily runs. It can't backfill the past, so
+event-level backtesting is still not possible *today* — but the archive is
+the prerequisite Phase 2's matched-baseline event studies need, and the
+sooner it starts accumulating the sooner that becomes possible.
 
 ---
 
@@ -216,6 +257,15 @@ baseline event studies, which need exact event dates anyway).
 
 In the spirit of an honest status report, not just a feature list:
 
+- **`hospital_demand` is respiratory-illness specific, not all-cause hospital
+  demand.** The pipeline's only real source (`data/ma_dph_respiratory.csv`, MA
+  DPH "broad acute respiratory" ED visits/admissions) and its automated
+  fallback (CDC FluView ILI) both cover respiratory illness only. Predicting
+  *overall* hospital/ED demand is the project's long-term goal, not its
+  current state — every result in "What we've found so far" and every
+  "hospital demand" label in the dashboard is a respiratory-demand proxy.
+  Testing the broader hypothesis would need an all-cause ED-visit or
+  admissions source added alongside this one.
 - **The MWRA wastewater fallback has never run against live data.** Its
   machine-readable export URL moves over time and `wastewater.mwra.data_url`
   has never been set, so that tier is unexercised code. WastewaterSCAN (Tier
@@ -229,20 +279,30 @@ In the spirit of an honest status report, not just a feature list:
   hosts (Ticketmaster, MBTA ArcGIS, mass.gov, Open-Meteo), so `pytest` covers
   these with captured payloads and the daily GitHub Actions run (full network
   access) is the actual integration test — confirmed working: the `data`
-  branch has 1,950 rows of real MBTA gated-entry ridership and 596 real
-  events.
+  branch has ~1,950 rows of real MBTA gated-entry ridership and 827 real
+  upcoming events (616 Ticketmaster + 229 Boston.gov civic events).
 - **Transit and weather only have a rolling ~1 year of real history.** Unlike
   wastewater (WastewaterSCAN, 2022–present) and hospital demand (MA DPH,
   2019–present), neither MBTA's historical ridership nor Open-Meteo's archive
   has been backfilled beyond what the daily GitHub Actions run accumulates on
   the `data` branch. See "The other three sub-hypotheses, on real data" above
   — a deeper backfill needs to run somewhere with unrestricted network access.
-- **Events have zero overlap with historical hospital demand.** Ticketmaster
-  and Boston.gov civic events are upcoming-events APIs (rolling ~365 days
-  forward), so the `events` signal can't currently be backtested against
-  past `hospital_demand` at all — only the academic-calendar population proxy
-  can. Phase 2's matched-baseline event studies will need each day's events
-  archived going forward to fix this.
+- **Events have zero overlap with historical hospital demand (today) — but
+  `events_archive.parquet` is now accumulating one.** Ticketmaster and
+  Boston.gov civic events are upcoming-events APIs (rolling ~365 days
+  forward), so the `events` signal still can't be backtested against past
+  `hospital_demand` *yet* — only the academic-calendar population proxy can.
+  As of this session, each day's snapshot is folded into a running archive
+  instead of discarded, so real event-level overlap will build up at roughly
+  a year per year of daily runs, which Phase 2's matched-baseline event
+  studies will need.
+- ~~**Boston.gov civic events appear to be contributing zero rows in
+  production.**~~ **Fixed.** The fetcher was sending
+  `sort=field_event_date_recur_value`, which Drupal's JSON:API rejects with
+  `400 Bad Request` (confirmed in production logs) — `civic_events.fetch_events`
+  failed soft to empty on every run. Removing the unsupported `sort` param (and
+  sorting client-side instead) immediately recovered 229 civic events
+  (marathons, parades, festivals, public health fairs) on the next run.
 
 ---
 
@@ -255,7 +315,7 @@ In the spirit of an honest status report, not just a feature list:
 | Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series, lagged regression panel |
 | Cross-correlation analysis | Working — `src/analysis/correlate.py`, used by the dashboard |
 | Count + surge regression | Working, in the dashboard — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC), tested against real data for all four sub-hypotheses |
-| Test suite | 56 tests, all passing |
+| Test suite | 67 tests, all passing |
 | Phase 2 event studies | Planned |
 | Second city | Architecture ready, untested |
 

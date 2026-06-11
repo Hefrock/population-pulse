@@ -64,7 +64,8 @@ class CityDataProvider(ABC):
     @abstractmethod
     def fetch_events(self, start: str, end: str) -> pd.DataFrame:
         """Large gatherings. Columns: ``timestamp``, ``venue``, ``name``,
-        ``expected_attendance`` (nullable)."""
+        ``expected_attendance`` (nullable), ``source`` (which fetcher the row
+        came from -- used to fold daily snapshots into ``events_archive``)."""
 
     @abstractmethod
     def fetch_academic_calendar(self, start: str, end: str) -> pd.DataFrame:

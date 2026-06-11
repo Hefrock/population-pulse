@@ -10,6 +10,14 @@ descriptive: ingest signals → align on a weekly timeline → run lagged
 cross-correlation against hospital demand. Boston is the only city, but the
 architecture is deliberately city-agnostic.
 
+**Current scope vs. the long-term goal:** the eventual aim is *overall* hospital
+demand, but the only `hospital_demand` data available today is
+**respiratory-illness** ED visits/admissions (MA DPH `ed_visits_respiratory` /
+`hospital_admissions_respiratory`, or CDC FluView `ili_patients` as an automated
+fallback — see "Data provenance" below). Every `hospital_demand` reference in this
+codebase, the dashboard, and the README's results is therefore a respiratory-demand
+proxy, not all-cause hospital demand — don't describe it as the latter.
+
 ## Commands
 
 ```bash
@@ -17,7 +25,7 @@ pip install -r requirements.txt              # deps
 python -m src.ingestion.make_samples          # regenerate synthetic sample data
 python -m src.ingestion.run --city boston     # full ingest (writes data/boston/*.parquet)
 streamlit run src/dashboard/app.py            # dashboard
-pytest tests/ -q                              # test suite (currently 56)
+pytest tests/ -q                              # test suite (currently 67)
 ```
 
 `run.py` accepts `--start`/`--end` (ISO dates); default is the trailing 365 days.
@@ -38,6 +46,7 @@ src/analysis/correlate.py  # align(), seasonal_residual(), lagged_cross_correlat
 src/analysis/regression.py # multi-driver lagged Poisson/NB regression + surge-label logistic regression (AUC-ROC)
 src/dashboard/app.py       # Streamlit; reads Parquet, no API keys — uses correlate + regression
 src/ingestion/make_samples.py  # synthetic data with planted signals for offline/CI
+src/ingestion/events_archive.py  # folds daily events snapshots into events_archive.parquet
 ```
 
 ### Signals (drivers + the dependent variable)
@@ -46,12 +55,19 @@ src/ingestion/make_samples.py  # synthetic data with planted signals for offline
 |--------|---------|----------------------------------|
 | transit | `mbta.py` | `route`, `value` |
 | weather | `weather.py` | one column per variable (wide) |
-| events | `events.py` + `ticketmaster.py` + `civic_events.py` | `venue`, `name`, `expected_attendance` |
+| events | `events.py` + `ticketmaster.py` + `civic_events.py` | `venue`, `name`, `expected_attendance`, `source` |
 | academic_calendar | `academic_calendar.py` | `school`, `value` |
 | wastewater | `wastewater.py` | `pathogen`, `value`, `source` |
-| hospital_demand | `hospital.py` + `cdc_fluview.py` | `metric`, `value` |
+| hospital_demand | `hospital.py` + `cdc_fluview.py` | `metric`, `value` (respiratory-only, see above) |
 
-`hospital_demand` is the **dependent variable**; everything else is a driver.
+`events` is also accumulated into `data/<city>/events_archive.parquet` by
+`run.py` (each day's upcoming-events snapshot folded into a running history,
+deduplicated by date + event name) — see `src/ingestion/events_archive.py` and
+README's "Known limitations" for why this exists.
+
+`hospital_demand` is the **dependent variable**; everything else is a driver. It
+currently represents respiratory-illness ED demand specifically, not all-cause
+hospital demand.
 
 See README's "Known limitations" for the current honest list of gaps (MWRA
 wastewater fallback is unexercised, transit/weather only have ~1 year of real

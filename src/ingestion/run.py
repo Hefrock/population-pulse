@@ -7,19 +7,31 @@ Pulls every signal for the given city via its provider, writes each to a Parquet
 file under data/<city>/, and prints a short summary. Designed to be safe to run
 repeatedly (it overwrites the per-signal files) and to be the thing a scheduled
 GitHub Action calls.
+
+The ``events`` signal additionally maintains ``events_archive.parquet``: each
+day's upcoming-events snapshot is folded into a running history (see
+``src/ingestion/events_archive.py``) rather than overwritten, so the events
+signal slowly accumulates real date overlap with historical hospital_demand.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.ingestion import events_archive
 from src.providers import load_provider
 
 load_dotenv()
+
+DATA_BRANCH_BASE = os.environ.get(
+    "POPULATION_PULSE_DATA_URL",
+    "https://raw.githubusercontent.com/hefrock/population-pulse/data",
+)
 
 
 def _default_range() -> tuple[str, str]:
@@ -50,6 +62,14 @@ def run(city: str, start: str, end: str) -> None:
             path = out_dir / f"{name}.parquet"
             df.to_parquet(path, index=False)
             print(f"  {name:16s} {len(df):6d} rows -> {path}")
+
+            if name == "events":
+                archive_path = out_dir / "events_archive.parquet"
+                archive_url = f"{DATA_BRANCH_BASE}/data/{city}/events_archive.parquet"
+                existing = events_archive.load_existing(archive_path, archive_url)
+                archive = events_archive.merge(existing, df)
+                archive.to_parquet(archive_path, index=False)
+                print(f"  {'events_archive':16s} {len(archive):6d} rows -> {archive_path}")
         except Exception as exc:  # noqa: BLE001 - we want one bad source to not kill the run
             print(f"  {name:16s} FAILED: {exc}")
 
