@@ -10,6 +10,14 @@ descriptive: ingest signals → align on a weekly timeline → run lagged
 cross-correlation against hospital demand. Boston is the only city, but the
 architecture is deliberately city-agnostic.
 
+**Current scope vs. the long-term goal:** the eventual aim is *overall* hospital
+demand, but the only `hospital_demand` data available today is
+**respiratory-illness** ED visits/admissions (MA DPH `ed_visits_respiratory` /
+`hospital_admissions_respiratory`, or CDC FluView `ili_patients` as an automated
+fallback — see "Data provenance" below). Every `hospital_demand` reference in this
+codebase, the dashboard, and the README's results is therefore a respiratory-demand
+proxy, not all-cause hospital demand — don't describe it as the latter.
+
 ## Commands
 
 ```bash
@@ -49,9 +57,11 @@ src/ingestion/make_samples.py  # synthetic data with planted signals for offline
 | events | `events.py` + `ticketmaster.py` + `civic_events.py` | `venue`, `name`, `expected_attendance` |
 | academic_calendar | `academic_calendar.py` | `school`, `value` |
 | wastewater | `wastewater.py` | `pathogen`, `value`, `source` |
-| hospital_demand | `hospital.py` + `cdc_fluview.py` | `metric`, `value` |
+| hospital_demand | `hospital.py` + `cdc_fluview.py` | `metric`, `value` (respiratory-only, see above) |
 
-`hospital_demand` is the **dependent variable**; everything else is a driver.
+`hospital_demand` is the **dependent variable**; everything else is a driver. It
+currently represents respiratory-illness ED demand specifically, not all-cause
+hospital demand.
 
 See README's "Known limitations" for the current honest list of gaps (MWRA
 wastewater fallback is unexercised, transit/weather only have ~1 year of real

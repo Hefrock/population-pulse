@@ -164,27 +164,30 @@ def _render_overview(
         lo = residual.quantile(0.25)
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Hospital demand (latest week)", f"{latest_value:,.0f}")
+        c1.metric("Respiratory ED demand (latest week)", f"{latest_value:,.0f}")
         c2.metric("Vs. seasonal baseline", f"{latest_residual:+,.1f}")
         c3.metric("Weeks of data in range", f"{len(hd)}")
 
         if latest_residual > hi:
             st.warning(
-                "**Elevated for this time of year** — the latest week sits in the "
-                "top quarter of residuals after removing the seasonal trend."
+                "**Elevated for this time of year** — respiratory ED demand in "
+                "the latest week sits in the top quarter of residuals after "
+                "removing the seasonal trend."
             )
         elif latest_residual < lo:
             st.info(
-                "**Below baseline for this time of year** — the latest week sits "
-                "in the bottom quarter of residuals after removing the seasonal trend."
+                "**Below baseline for this time of year** — respiratory ED "
+                "demand in the latest week sits in the bottom quarter of "
+                "residuals after removing the seasonal trend."
             )
         else:
             st.success(
-                "**Normal for this time of year** — the latest week is within the "
-                "typical range of the seasonal trend."
+                "**Normal for this time of year** — respiratory ED demand in "
+                "the latest week is within the typical range of the seasonal "
+                "trend."
             )
     else:
-        st.info("Not enough hospital-demand data in this date range for a status summary.")
+        st.info("Not enough respiratory ED demand data in this date range for a status summary.")
 
     col_events, col_freshness = st.columns(2)
 
@@ -213,9 +216,9 @@ def _render_overview(
 def _render_timeline(aligned: pd.DataFrame, events_df: pd.DataFrame) -> None:
     st.caption(
         "Each signal is shown as a z-score (mean 0, std 1 over this date range) "
-        "so series with very different units and scales — ridership, °C, ED "
-        "visits — are comparable on one chart. The correlation and regression "
-        "tab uses the raw values."
+        "so series with very different units and scales — ridership, °C, "
+        "respiratory ED visits — are comparable on one chart. The correlation "
+        "and regression tab uses the raw values."
     )
 
     columns = list(aligned.columns)
@@ -283,7 +286,7 @@ def _render_timeline(aligned: pd.DataFrame, events_df: pd.DataFrame) -> None:
 def _render_correlation_and_regression(aligned: pd.DataFrame) -> None:
     drivers = [c for c in aligned.columns if c != "hospital_demand"]
     if "hospital_demand" not in aligned.columns or not drivers:
-        st.info("Need both a driver signal and hospital_demand to correlate.")
+        st.info("Need both a driver signal and respiratory ED demand (`hospital_demand`) to correlate.")
         return
 
     col1, col2 = st.columns(2)
@@ -293,8 +296,9 @@ def _render_correlation_and_regression(aligned: pd.DataFrame) -> None:
         deseason = st.checkbox("Deseasonalize first (recommended)", value=True)
 
     st.caption(
-        "Positive lag = the driver leads hospital demand by that many weeks. "
-        "Deseasonalized by default to avoid spurious winter-trend correlation."
+        "Positive lag = the driver leads respiratory ED demand by that many "
+        "weeks. Deseasonalized by default to avoid spurious winter-trend "
+        "correlation."
     )
 
     try:
@@ -320,7 +324,7 @@ def _render_correlation_and_regression(aligned: pd.DataFrame) -> None:
     ).properties(height=280)
     st.altair_chart(bars, width="stretch")
     st.metric(
-        label=f"Strongest correlation ({driver} → hospital demand)",
+        label=f"Strongest correlation ({driver} → respiratory ED demand)",
         value=f"{result.best_corr:+.2f}",
         delta=f"at lag {result.best_lag} weeks",
     )
@@ -400,7 +404,14 @@ def main() -> None:
     st.title("population-pulse")
     st.caption(
         "Do population surges — events, weather, disease — correlate with "
-        "hospital ED demand? Phase 1: descriptive exploration."
+        "respiratory ED demand? Phase 1: descriptive exploration."
+    )
+    st.caption(
+        "**\"Hospital demand\" (`hospital_demand`) here means weekly "
+        "respiratory-illness ED visits/admissions** (MA DPH, or CDC FluView ILI "
+        "as a fallback) — not all-cause hospital demand. Predicting overall "
+        "hospital demand is the long-term goal; today's data covers only the "
+        "respiratory slice."
     )
 
     with st.sidebar:

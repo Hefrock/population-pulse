@@ -4,6 +4,13 @@
 
 This project builds a data pipeline and dashboard to explore that question for Boston, with the architecture ready for other cities. It ingests real signals daily, aligns them on a common timeline, and lets you run lagged correlation analysis between any driver signal and hospital demand.
 
+**Current scope:** the only real `hospital_demand` data available today is
+**respiratory-illness** ED visits/admissions (MA DPH, with CDC FluView ILI as a
+fallback) — not all-cause hospital demand. Predicting *overall* hospital demand is
+the long-term goal of this project; until an all-cause source is added, every
+"hospital demand" result here (charts, dashboard, correlations below) is a
+respiratory-demand proxy. See "Known limitations" for details.
+
 ---
 
 ## Live dashboard
@@ -20,7 +27,7 @@ This project builds a data pipeline and dashboard to explore that question for B
    - Events (Sports and Music events via Ticketmaster; civic events via Boston.gov)
    - Academic calendar (student population in/out of the city — ~150K students across 8 universities)
    - Wastewater viral surveillance (SARS-CoV-2, Influenza A/B, RSV — real Deer Island data via WastewaterSCAN, the leading indicator of respiratory demand)
-   - Hospital demand (MA DPH weekly ED visits + admissions, 2019–present — the dependent variable; CDC FluView ILI is the automated fallback)
+   - Hospital demand — **respiratory-illness** ED visits + admissions (MA DPH weekly data, 2019–present — the dependent variable; CDC FluView ILI is the automated fallback). Not all-cause hospital demand; see "Known limitations"
 
 2. **Stores data on a `data` branch** — the dashboard reads from there, so the app has no secrets or API calls of its own.
 
@@ -58,7 +65,7 @@ These are analyzed separately because they'd confound each other in a single cor
 | Wastewater (SARS-CoV-2, Flu A/B, RSV) | WastewaterSCAN (Stanford/Emory), Deer Island plant | Twice-weekly, 2022–present | None (undocumented public endpoint) |
 | Wastewater (fallback, SARS-CoV-2) | MWRA Deer Island / Biobot (metro-Boston) | ~Daily | None — needs `data_url` set, see below |
 | Wastewater (fallback, multi-pathogen) | CDC NWSS Wastewater Viral Activity Level (Socrata) | Weekly | None |
-| Hospital demand | MA DPH Respiratory Dashboard ("Visits by week") | Weekly ED visits + admissions, 2019–present | Manual download |
+| Hospital demand (respiratory-illness only) | MA DPH Respiratory Dashboard ("Visits by week") | Weekly ED visits + admissions, 2019–present | Manual download |
 | Hospital demand (fallback) | CDC FluView via Delphi Epidata | Weekly ILI counts | None |
 
 **On hospital data:** `data/ma_dph_respiratory.csv` (statewide weekly ED visits and admissions for "broad acute respiratory" diagnoses, 2019–present, 722 rows) is checked in and is the pipeline's Tier 1 — CDC FluView's ILI proxy is now only a fallback. To refresh it, download the current "Respiratory Disease Reporting" workbook from [mass.gov/info-details/weekly-flu-report](https://www.mass.gov/info-details/weekly-flu-report) (its "Visits by week" sheet covers all prior seasons) and run:
@@ -139,11 +146,11 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 ## What we've found so far
 
 This is the honest result of running the pipeline end-to-end on ~3.5 years of
-real data (WastewaterSCAN wastewater + MA DPH ED visits, Dec 2022 – May 2026,
-~180 weekly observations). `src/analysis/regression.py` turns each week into a
-binary "surge" label (deseasonalized ED-visit residual in the top quartile —
-i.e. running hot *for that time of year*) and fits a logistic regression of
-each wastewater pathogen against it:
+real data (WastewaterSCAN wastewater + MA DPH respiratory ED visits, Dec 2022 –
+May 2026, ~180 weekly observations). `src/analysis/regression.py` turns each
+week into a binary "surge" label (deseasonalized respiratory ED-visit residual
+in the top quartile — i.e. running hot *for that time of year*) and fits a
+logistic regression of each wastewater pathogen against it:
 
 | Pathogen | Best lag | AUC-ROC | p-value |
 |---|---|---|---|
@@ -216,6 +223,15 @@ baseline event studies, which need exact event dates anyway).
 
 In the spirit of an honest status report, not just a feature list:
 
+- **`hospital_demand` is respiratory-illness specific, not all-cause hospital
+  demand.** The pipeline's only real source (`data/ma_dph_respiratory.csv`, MA
+  DPH "broad acute respiratory" ED visits/admissions) and its automated
+  fallback (CDC FluView ILI) both cover respiratory illness only. Predicting
+  *overall* hospital/ED demand is the project's long-term goal, not its
+  current state — every result in "What we've found so far" and every
+  "hospital demand" label in the dashboard is a respiratory-demand proxy.
+  Testing the broader hypothesis would need an all-cause ED-visit or
+  admissions source added alongside this one.
 - **The MWRA wastewater fallback has never run against live data.** Its
   machine-readable export URL moves over time and `wastewater.mwra.data_url`
   has never been set, so that tier is unexercised code. WastewaterSCAN (Tier
