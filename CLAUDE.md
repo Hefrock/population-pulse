@@ -46,6 +46,7 @@ src/analysis/correlate.py  # align(), seasonal_residual(), lagged_cross_correlat
 src/analysis/regression.py # multi-driver lagged Poisson/NB regression + surge-label logistic regression (AUC-ROC)
 src/dashboard/app.py       # Streamlit; reads Parquet, no API keys — uses correlate + regression
 src/ingestion/make_samples.py  # synthetic data with planted signals for offline/CI
+src/ingestion/events_archive.py  # folds daily events snapshots into events_archive.parquet
 ```
 
 ### Signals (drivers + the dependent variable)
@@ -54,10 +55,15 @@ src/ingestion/make_samples.py  # synthetic data with planted signals for offline
 |--------|---------|----------------------------------|
 | transit | `mbta.py` | `route`, `value` |
 | weather | `weather.py` | one column per variable (wide) |
-| events | `events.py` + `ticketmaster.py` + `civic_events.py` | `venue`, `name`, `expected_attendance` |
+| events | `events.py` + `ticketmaster.py` + `civic_events.py` | `venue`, `name`, `expected_attendance`, `source` |
 | academic_calendar | `academic_calendar.py` | `school`, `value` |
 | wastewater | `wastewater.py` | `pathogen`, `value`, `source` |
 | hospital_demand | `hospital.py` + `cdc_fluview.py` | `metric`, `value` (respiratory-only, see above) |
+
+`events` is also accumulated into `data/<city>/events_archive.parquet` by
+`run.py` (each day's upcoming-events snapshot folded into a running history,
+deduplicated by date + event name) — see `src/ingestion/events_archive.py` and
+README's "Known limitations" for why this exists.
 
 `hospital_demand` is the **dependent variable**; everything else is a driver. It
 currently represents respiratory-illness ED demand specifically, not all-cause

@@ -91,7 +91,7 @@ class BostonProvider(CityDataProvider):
                 csv_df["source"] = "manual"
                 frames.append(csv_df)
 
-        cols = ["timestamp", "venue", "name", "expected_attendance"]
+        cols = ["timestamp", "venue", "name", "expected_attendance", "source"]
         if not frames:
             return pd.DataFrame(columns=cols)
 

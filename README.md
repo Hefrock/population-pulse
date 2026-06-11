@@ -208,14 +208,19 @@ WastewaterSCAN (2022–present) or MA DPH (2019–present). A longer real-data
 backfill for transit/weather would need to run from an environment with
 unrestricted network access (see "Known limitations").
 
-**Events couldn't be tested at all:** Ticketmaster and Boston.gov civic
-events are *upcoming-events* APIs (rolling ~365 days forward), so the
-`events` signal on the `data` branch has zero date overlap with historical
-`hospital_demand` — there is currently no way to backtest the
-large-gatherings hypothesis against *event-level* data, only against the
-academic-calendar population proxy above. Event-level backtesting would
-need each day's events archived going forward (a job for Phase 2's matched-
-baseline event studies, which need exact event dates anyway).
+**Events couldn't be tested at all, but the gap is now closing:**
+Ticketmaster and Boston.gov civic events are *upcoming-events* APIs (rolling
+~365 days forward), so any single day's `events` snapshot has zero date
+overlap with historical `hospital_demand` — there is currently no way to
+backtest the large-gatherings hypothesis against *event-level* data, only
+against the academic-calendar population proxy above. `run.py` now also
+maintains `events_archive.parquet`: each day's snapshot is folded into a
+running history (deduplicated by date + event name) instead of being
+overwritten, so real event-level overlap with `hospital_demand` accumulates
+at roughly a year per year of daily runs. It can't backfill the past, so
+event-level backtesting is still not possible *today* — but the archive is
+the prerequisite Phase 2's matched-baseline event studies need, and the
+sooner it starts accumulating the sooner that becomes possible.
 
 ---
 
@@ -253,12 +258,24 @@ In the spirit of an honest status report, not just a feature list:
   has been backfilled beyond what the daily GitHub Actions run accumulates on
   the `data` branch. See "The other three sub-hypotheses, on real data" above
   — a deeper backfill needs to run somewhere with unrestricted network access.
-- **Events have zero overlap with historical hospital demand.** Ticketmaster
-  and Boston.gov civic events are upcoming-events APIs (rolling ~365 days
-  forward), so the `events` signal can't currently be backtested against
-  past `hospital_demand` at all — only the academic-calendar population proxy
-  can. Phase 2's matched-baseline event studies will need each day's events
-  archived going forward to fix this.
+- **Events have zero overlap with historical hospital demand (today) — but
+  `events_archive.parquet` is now accumulating one.** Ticketmaster and
+  Boston.gov civic events are upcoming-events APIs (rolling ~365 days
+  forward), so the `events` signal still can't be backtested against past
+  `hospital_demand` *yet* — only the academic-calendar population proxy can.
+  As of this session, each day's snapshot is folded into a running archive
+  instead of discarded, so real event-level overlap will build up at roughly
+  a year per year of daily runs, which Phase 2's matched-baseline event
+  studies will need.
+- **Boston.gov civic events appear to be contributing zero rows in
+  production.** The `civic_events` fetcher passes its mocked unit tests, but
+  inspecting the real `data` branch shows all ~598 events come from
+  Ticketmaster (real venue names) — none have `civic_events`'s hardcoded
+  `venue="Boston, MA"`. This sandbox can't reach `boston.gov` to confirm why
+  (likely a Drupal JSON:API endpoint/schema change), but it means civic
+  gatherings (marathons, parades, festivals, public health fairs) the project
+  cares about are currently missing from the `events` signal entirely. Needs
+  live debugging from an environment with network access to `boston.gov`.
 
 ---
 
