@@ -279,8 +279,8 @@ In the spirit of an honest status report, not just a feature list:
   hosts (Ticketmaster, MBTA ArcGIS, mass.gov, Open-Meteo), so `pytest` covers
   these with captured payloads and the daily GitHub Actions run (full network
   access) is the actual integration test — confirmed working: the `data`
-  branch has 1,950 rows of real MBTA gated-entry ridership and 596 real
-  events.
+  branch has ~1,950 rows of real MBTA gated-entry ridership and 827 real
+  upcoming events (616 Ticketmaster + 229 Boston.gov civic events).
 - **Transit and weather only have a rolling ~1 year of real history.** Unlike
   wastewater (WastewaterSCAN, 2022–present) and hospital demand (MA DPH,
   2019–present), neither MBTA's historical ridership nor Open-Meteo's archive
@@ -296,15 +296,13 @@ In the spirit of an honest status report, not just a feature list:
   instead of discarded, so real event-level overlap will build up at roughly
   a year per year of daily runs, which Phase 2's matched-baseline event
   studies will need.
-- **Boston.gov civic events appear to be contributing zero rows in
-  production.** The `civic_events` fetcher passes its mocked unit tests, but
-  inspecting the real `data` branch shows all ~598 events come from
-  Ticketmaster (real venue names) — none have `civic_events`'s hardcoded
-  `venue="Boston, MA"`. This sandbox can't reach `boston.gov` to confirm why
-  (likely a Drupal JSON:API endpoint/schema change), but it means civic
-  gatherings (marathons, parades, festivals, public health fairs) the project
-  cares about are currently missing from the `events` signal entirely. Needs
-  live debugging from an environment with network access to `boston.gov`.
+- ~~**Boston.gov civic events appear to be contributing zero rows in
+  production.**~~ **Fixed.** The fetcher was sending
+  `sort=field_event_date_recur_value`, which Drupal's JSON:API rejects with
+  `400 Bad Request` (confirmed in production logs) — `civic_events.fetch_events`
+  failed soft to empty on every run. Removing the unsupported `sort` param (and
+  sorting client-side instead) immediately recovered 229 civic events
+  (marathons, parades, festivals, public health fairs) on the next run.
 
 ---
 
