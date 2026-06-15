@@ -274,6 +274,26 @@ In the spirit of an honest status report, not just a feature list:
   "hospital demand" label in the dashboard is a respiratory-demand proxy.
   Testing the broader hypothesis would need an all-cause ED-visit or
   admissions source added alongside this one.
+- **`hospital_demand` likely conflates two demographically distinct
+  populations with different drivers, and nothing in the pipeline can
+  separate them.** CDC NHAMCS data shows ED visit rates by age are roughly
+  U-shaped even *within* adults — 18–44: 47/100, 45–64: 43/100, 65–74: 47/100,
+  75+: 66/100 (2019), with the 18–44 bump concentrated in ages 18–24
+  (injury/mental-health/substance-use). The two humps differ in *how* people
+  arrive and what happens next, not just in rate: ~6.7% of pediatric and
+  ~14.5% of non-elderly-adult ED visits arrive by ambulance vs. ~43.2% for
+  65+, and 53% of those elderly ambulance-transports end in admission. So a
+  single weekly `hospital_demand` series is plausibly a superposition of a
+  "young-adult" component (low-acuity, walk-in, maybe correlated with
+  `events`/`academic_calendar`) and an "elderly" component (high-acuity,
+  ambulance-heavy, maybe correlated with `weather`/`wastewater`) — pooling
+  both in one regression could wash out a real effect in either. Neither
+  `data/ma_dph_respiratory.csv` nor CDC FluView carry age breakdowns to test
+  this. **Possible future exploration:** if an age-stratified
+  `hospital_demand` source (or an elderly-skewed proxy like ambulance trip
+  volume — see MATRIS/Health Care Capacity dashboard) becomes available, rerun
+  `lagged_cross_correlation` / `fit_count_regression` per age band as a subset
+  analysis to check whether driver relationships differ by population.
 - **The MWRA wastewater fallback has never run against live data.** Its
   machine-readable export URL moves over time and `wastewater.mwra.data_url`
   has never been set, so that tier is unexercised code. WastewaterSCAN (Tier
