@@ -47,6 +47,7 @@ src/analysis/regression.py # multi-driver lagged Poisson/NB regression + surge-l
 src/dashboard/app.py       # Streamlit; reads Parquet, no API keys — uses correlate + regression
 src/ingestion/make_samples.py  # synthetic data with planted signals for offline/CI
 src/ingestion/events_archive.py  # folds daily events snapshots into events_archive.parquet
+src/ingestion/timeseries_archive.py  # merges transit/weather fetches into their parquet in place
 ```
 
 ### Signals (drivers + the dependent variable)
@@ -64,6 +65,13 @@ src/ingestion/events_archive.py  # folds daily events snapshots into events_arch
 `run.py` (each day's upcoming-events snapshot folded into a running history,
 deduplicated by date + event name) — see `src/ingestion/events_archive.py` and
 README's "Known limitations" for why this exists.
+
+`transit` and `weather` are merged into their existing
+`data/<city>/{transit,weather}.parquet` in place by `run.py` (each fetch
+folded into the accumulated file, deduplicated by `timestamp`[, `route`])
+instead of overwriting it — see `src/ingestion/timeseries_archive.py`. This
+removes the ~1-year rolling cap and is the prerequisite for a real historical
+backfill (MBTA gated entries to 2014, Open-Meteo archive decades further).
 
 `hospital_demand` is the **dependent variable**; everything else is a driver. It
 currently represents respiratory-illness ED demand specifically, not all-cause

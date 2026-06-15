@@ -12,6 +12,12 @@ The ``events`` signal additionally maintains ``events_archive.parquet``: each
 day's upcoming-events snapshot is folded into a running history (see
 ``src/ingestion/events_archive.py``) rather than overwritten, so the events
 signal slowly accumulates real date overlap with historical hospital_demand.
+
+The ``transit`` and ``weather`` signals merge each fetch into the existing
+``transit.parquet`` / ``weather.parquet`` in place (see
+``src/ingestion/timeseries_archive.py``) instead of overwriting it, so a
+wide one-time backfill plus the daily rolling fetch accumulate permanently
+rather than being capped at the rolling window.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.ingestion import events_archive
+from src.ingestion import events_archive, timeseries_archive
 from src.providers import load_provider
 
 load_dotenv()
@@ -32,6 +38,14 @@ DATA_BRANCH_BASE = os.environ.get(
     "POPULATION_PULSE_DATA_URL",
     "https://raw.githubusercontent.com/hefrock/population-pulse/data",
 )
+
+# Key columns for deduplicating accumulated timeseries signals (see
+# timeseries_archive.merge). transit has multiple routes per timestamp;
+# weather is wide (one row per timestamp).
+TIMESERIES_KEY_COLUMNS = {
+    "transit": ["timestamp", "route"],
+    "weather": ["timestamp"],
+}
 
 
 def _default_range() -> tuple[str, str]:
@@ -60,6 +74,12 @@ def run(city: str, start: str, end: str) -> None:
         try:
             df = fetch(start, end)
             path = out_dir / f"{name}.parquet"
+
+            if name in TIMESERIES_KEY_COLUMNS:
+                archive_url = f"{DATA_BRANCH_BASE}/data/{city}/{name}.parquet"
+                existing = timeseries_archive.load_existing(path, archive_url, list(df.columns))
+                df = timeseries_archive.merge(existing, df, TIMESERIES_KEY_COLUMNS[name])
+
             df.to_parquet(path, index=False)
             print(f"  {name:16s} {len(df):6d} rows -> {path}")
 

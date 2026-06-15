@@ -229,13 +229,18 @@ worth re-checking once more terms of academic-calendar history accumulate.
 Weather's NB p-value (0.12) is the next-closest, consistent with a real but
 sub-significant cold-weather effect at a 2-week lag.
 
-**Why these windows are so much shorter than wastewater's:** transit and
-weather have no historical-archive fallback exercised in this environment —
-their real data is whatever the daily GitHub Actions run has accumulated on
-the `data` branch (a rolling ~1 year), not a one-time deep backfill like
-WastewaterSCAN (2022–present) or MA DPH (2019–present). A longer real-data
-backfill for transit/weather would need to run from an environment with
-unrestricted network access (see "Known limitations").
+**Why these windows are so much shorter than wastewater's:** until now, transit
+and weather had no historical-archive fallback exercised in this environment —
+their real data was whatever the daily GitHub Actions run had accumulated on
+the `data` branch, capped at a rolling ~1 year because each run *overwrote*
+`transit.parquet`/`weather.parquet` with its fetch window. `run.py` now merges
+each fetch into the existing file in place instead (see
+`src/ingestion/timeseries_archive.py`), so the cap is gone — both the daily
+rolling fetch and a one-time wide `workflow_dispatch` backfill (MBTA gated
+entries go back to 2014, Open-Meteo's archive decades further) accumulate
+permanently, the same way `events_archive.parquet` does for events. A real
+backfill still needs to run from an environment with unrestricted network
+access (see "Known limitations").
 
 **Events couldn't be tested at all, but the gap is now closing:**
 Ticketmaster and Boston.gov civic events are *upcoming-events* APIs (rolling
@@ -281,12 +286,15 @@ In the spirit of an honest status report, not just a feature list:
   access) is the actual integration test — confirmed working: the `data`
   branch has ~1,950 rows of real MBTA gated-entry ridership and 827 real
   upcoming events (616 Ticketmaster + 229 Boston.gov civic events).
-- **Transit and weather only have a rolling ~1 year of real history.** Unlike
-  wastewater (WastewaterSCAN, 2022–present) and hospital demand (MA DPH,
-  2019–present), neither MBTA's historical ridership nor Open-Meteo's archive
-  has been backfilled beyond what the daily GitHub Actions run accumulates on
-  the `data` branch. See "The other three sub-hypotheses, on real data" above
-  — a deeper backfill needs to run somewhere with unrestricted network access.
+- **Transit and weather history is no longer capped at ~1 year, but hasn't
+  been backfilled yet.** `run.py` used to overwrite `transit.parquet` /
+  `weather.parquet` with each day's fetch window; it now merges each fetch
+  into the existing file in place (`src/ingestion/timeseries_archive.py`), so
+  the daily rolling fetch accumulates permanently going forward. Neither
+  MBTA's historical ridership (back to 2014) nor Open-Meteo's archive (decades
+  further) has actually been backfilled yet, though — see "The other three
+  sub-hypotheses, on real data" above — a one-time wide `workflow_dispatch`
+  run from an environment with unrestricted network access would do it.
 - **Events have zero overlap with historical hospital demand (today) — but
   `events_archive.parquet` is now accumulating one.** Ticketmaster and
   Boston.gov civic events are upcoming-events APIs (rolling ~365 days
@@ -315,7 +323,7 @@ In the spirit of an honest status report, not just a feature list:
 | Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series, lagged regression panel |
 | Cross-correlation analysis | Working — `src/analysis/correlate.py`, used by the dashboard |
 | Count + surge regression | Working, in the dashboard — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC), tested against real data for all four sub-hypotheses |
-| Test suite | 67 tests, all passing |
+| Test suite | 77 tests, all passing |
 | Phase 2 event studies | Planned |
 | Second city | Architecture ready, untested |
 
