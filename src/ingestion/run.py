@@ -13,11 +13,13 @@ day's upcoming-events snapshot is folded into a running history (see
 ``src/ingestion/events_archive.py``) rather than overwritten, so the events
 signal slowly accumulates real date overlap with historical hospital_demand.
 
-The ``transit`` and ``weather`` signals merge each fetch into the existing
-``transit.parquet`` / ``weather.parquet`` in place (see
-``src/ingestion/timeseries_archive.py``) instead of overwriting it, so a
-wide one-time backfill plus the daily rolling fetch accumulate permanently
-rather than being capped at the rolling window.
+The ``transit``, ``weather``, and ``bikeshare`` signals merge each fetch into
+the existing ``transit.parquet`` / ``weather.parquet`` / ``bikeshare.parquet``
+in place (see ``src/ingestion/timeseries_archive.py``) instead of overwriting
+it, so a wide one-time backfill plus the daily rolling fetch accumulate
+permanently rather than being capped at the rolling window. This is also how
+``bikeshare``'s GBFS fallback (a single "right now" snapshot) builds up a
+history over time.
 """
 
 from __future__ import annotations
@@ -41,10 +43,11 @@ DATA_BRANCH_BASE = os.environ.get(
 
 # Key columns for deduplicating accumulated timeseries signals (see
 # timeseries_archive.merge). transit has multiple routes per timestamp;
-# weather is wide (one row per timestamp).
+# weather and bikeshare are one row per timestamp.
 TIMESERIES_KEY_COLUMNS = {
     "transit": ["timestamp", "route"],
     "weather": ["timestamp"],
+    "bikeshare": ["timestamp"],
 }
 
 
@@ -62,6 +65,7 @@ def run(city: str, start: str, end: str) -> None:
 
     signals = {
         "transit": provider.fetch_transit,
+        "bikeshare": provider.fetch_bikeshare,
         "weather": provider.fetch_weather,
         "events": provider.fetch_events,
         "academic_calendar": provider.fetch_academic_calendar,

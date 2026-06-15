@@ -42,8 +42,9 @@ respiratory-demand proxy. See "Known limitations" for details.
 
 ## What it does
 
-1. **Ingests six signals daily** via GitHub Actions:
+1. **Ingests seven signals daily** via GitHub Actions:
    - Transit volume (MBTA gated station entries — historical daily ridership, 2014–present)
+   - Bikeshare volume (Bluebikes trip-history archive — real daily ride counts, 2018–present, with a GBFS station-status fallback)
    - Weather (temperature, apparent temperature, precipitation)
    - Events (Sports and Music events via Ticketmaster; civic events via Boston.gov)
    - Academic calendar (student population in/out of the city — ~150K students across 8 universities)
@@ -65,7 +66,7 @@ Four sub-hypotheses, each with a different expected lag:
 | Large gatherings | Acute injuries, alcohol, cardiac events | Events, academic calendar | Hours to same-day |
 | Weather | Heat stress, cold, asthma, falls | Weather | Same-day to a few days |
 | Disease surges | Infection incubation → illness | Wastewater (leading), academic calendar | Days to ~2 weeks |
-| Daily commute | Accidents, baseline exposure | Transit | Same-day |
+| Daily commute | Accidents, baseline exposure | Transit, bikeshare | Same-day |
 
 These are analyzed separately because they'd confound each other in a single correlation — everything trends together in winter.
 
@@ -79,6 +80,8 @@ These are analyzed separately because they'd confound each other in a single cor
 |--------|--------|---------|-------------|
 | Transit | MBTA Gated Station Entries (MassDOT open data) | Daily, 2014–present | None |
 | Transit (fallback) | MBTA V3 API | Real-time snapshot | Free — `api-v3.mbta.com` |
+| Bikeshare | Bluebikes trip-history archive (S3) | Daily ride counts, 2018–present (~1-2 month publication lag) | None |
+| Bikeshare (fallback) | Bluebikes GBFS `station_status` | Real-time snapshot (bikes docked, accumulated daily) | None |
 | Weather | Open-Meteo archive | Hourly historical | None |
 | Events | Ticketmaster Discovery API | Upcoming, rolling 365 days | Free — `developer.ticketmaster.com` |
 | Events (civic) | Boston.gov public calendar (Drupal JSON:API) | Upcoming, rolling 365 days | None |
@@ -279,6 +282,14 @@ In the spirit of an honest status report, not just a feature list:
 - **Second city is unbuilt.** The `CityDataProvider` abstraction is designed
   to make a second city "one YAML + one provider class," but that claim has
   never actually been tested against a real second city.
+- **Bikeshare's GBFS fallback is a stock measure, not a flow measure.** The
+  primary signal (`fetch_trip_history`) is a real daily ride count pulled from
+  Bluebikes' public S3 trip-data archive, but monthly files are published with
+  a ~1-2 month lag (e.g. fetching through December 2025 in mid-2026, the
+  November 2025 file was still 404). The GBFS `station_status` fallback only
+  reports bikes currently docked system-wide *right now* — a rough proxy for
+  that gap, accumulated daily like the MBTA live-snapshot fallback, but not
+  the same quantity as rides/day.
 - **Live-API fetchers are tested against mocked payloads, not real endpoints,
   in development.** The sandbox's network allowlist returns 403 for most data
   hosts (Ticketmaster, MBTA ArcGIS, mass.gov, Open-Meteo), so `pytest` covers

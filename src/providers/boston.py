@@ -12,7 +12,7 @@ import pandas as pd
 from src.providers.base import CityDataProvider
 from src.ingestion import (
     mbta, weather, events, hospital, ticketmaster, civic_events,
-    academic_calendar, wastewater,
+    academic_calendar, wastewater, bluebikes,
 )
 
 
@@ -31,6 +31,18 @@ class BostonProvider(CityDataProvider):
             # snapshot (when MBTA_API_KEY is set) and then the bundled sample.
             historical=cfg.get("historical"),
             # live=None lets the fetcher auto-detect based on MBTA_API_KEY
+        )
+
+    def fetch_bikeshare(self, start: str, end: str) -> pd.DataFrame:
+        cfg = self.config["bikeshare"]
+        return bluebikes.fetch_bikeshare(
+            start=start,
+            end=end,
+            timezone=self.timezone,
+            # Prefer the historical trip-data archive; fall back to the GBFS
+            # station-status snapshot and then the bundled sample.
+            trip_history=cfg.get("trip_history"),
+            gbfs=cfg.get("gbfs"),
         )
 
     def fetch_weather(self, start: str, end: str) -> pd.DataFrame:

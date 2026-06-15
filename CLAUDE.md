@@ -55,6 +55,7 @@ src/ingestion/timeseries_archive.py  # merges transit/weather fetches into their
 | Signal | Fetcher | Shape (cols beyond `timestamp`) |
 |--------|---------|----------------------------------|
 | transit | `mbta.py` | `route`, `value` |
+| bikeshare | `bluebikes.py` | `value` |
 | weather | `weather.py` | one column per variable (wide) |
 | events | `events.py` + `ticketmaster.py` + `civic_events.py` | `venue`, `name`, `expected_attendance`, `source` |
 | academic_calendar | `academic_calendar.py` | `school`, `value` |
@@ -66,12 +67,15 @@ src/ingestion/timeseries_archive.py  # merges transit/weather fetches into their
 deduplicated by date + event name) — see `src/ingestion/events_archive.py` and
 README's "Known limitations" for why this exists.
 
-`transit` and `weather` are merged into their existing
-`data/<city>/{transit,weather}.parquet` in place by `run.py` (each fetch
-folded into the accumulated file, deduplicated by `timestamp`[, `route`])
+`transit`, `weather`, and `bikeshare` are merged into their existing
+`data/<city>/{transit,weather,bikeshare}.parquet` in place by `run.py` (each
+fetch folded into the accumulated file, deduplicated by `timestamp`[, `route`])
 instead of overwriting it — see `src/ingestion/timeseries_archive.py`. This
 removes the ~1-year rolling cap and is the prerequisite for a real historical
 backfill (MBTA gated entries to 2014, Open-Meteo archive decades further).
+`bikeshare`'s GBFS fallback in particular has *no* history of its own (a
+"right now" snapshot, like MBTA's live-vehicle fallback), so this accumulation
+is how it builds one over time.
 
 `hospital_demand` is the **dependent variable**; everything else is a driver. It
 currently represents respiratory-illness ED demand specifically, not all-cause
