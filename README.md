@@ -296,16 +296,26 @@ In the spirit of an honest status report, not just a feature list:
   these with captured payloads and the daily GitHub Actions run (full network
   access) is the actual integration test — confirmed working: the `data`
   branch has ~1,950 rows of real MBTA gated-entry ridership and 827 real
-  upcoming events (616 Ticketmaster + 229 Boston.gov civic events).
-- **Transit and weather history is no longer capped at ~1 year, but hasn't
-  been backfilled yet.** `run.py` used to overwrite `transit.parquet` /
-  `weather.parquet` with each day's fetch window; it now merges each fetch
-  into the existing file in place (`src/ingestion/timeseries_archive.py`), so
-  the daily rolling fetch accumulates permanently going forward. Neither
-  MBTA's historical ridership (back to 2014) nor Open-Meteo's archive (decades
-  further) has actually been backfilled yet, though — see "The other three
+  upcoming events (616 Ticketmaster + 229 Boston.gov civic events). Bluebikes'
+  S3 trip-data archive *is* reachable from this sandbox, though (confirmed:
+  ~185 days of real ride counts fetched directly in development).
+- **Transit, weather, and bikeshare history is no longer capped at ~1 year,
+  but hasn't been backfilled yet.** `run.py` used to overwrite
+  `transit.parquet` / `weather.parquet` with each day's fetch window; it now
+  merges each fetch into the existing file in place
+  (`src/ingestion/timeseries_archive.py`), so the daily rolling fetch
+  accumulates permanently going forward. None of MBTA's historical ridership
+  (back to 2014), Open-Meteo's archive (decades further), or Bluebikes' trip
+  history has actually been backfilled yet, though — see "The other three
   sub-hypotheses, on real data" above — a one-time wide `workflow_dispatch`
   run from an environment with unrestricted network access would do it.
+  **Bikeshare is the best-positioned of the three for this:** Bluebikes'
+  `*-bluebikes-tripdata.zip` files go back to mid-2018 (confirmed: 201806
+  exists, 201501 doesn't — that's `*-hubway-tripdata.zip`, a different naming
+  this fetcher doesn't read), which fully covers `hospital_demand`'s real
+  history (MA DPH data starts 2019-06-30). A `workflow_dispatch --start
+  2018-07-01` run would give bikeshare real overlap with the *entire*
+  hospital-demand series from day one — unlike `events`, which has none yet.
 - **Events have zero overlap with historical hospital demand (today) — but
   `events_archive.parquet` is now accumulating one.** Ticketmaster and
   Boston.gov civic events are upcoming-events APIs (rolling ~365 days
