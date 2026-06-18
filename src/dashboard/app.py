@@ -334,7 +334,7 @@ def _render_correlation_and_regression(aligned: pd.DataFrame) -> None:
 
     corr_df = pd.DataFrame({"lag_weeks": result.lags, "correlation": result.correlations})
     bars = alt.Chart(corr_df).mark_bar().encode(
-        x=alt.X("lag_weeks:O", title="Lag (weeks)"),
+        x=alt.X("lag_weeks:O", title="Lag (weeks)", axis=alt.Axis(labelAngle=0)),
         y=alt.Y("correlation:Q", title="Correlation", scale=alt.Scale(domain=[-1, 1])),
         color=alt.condition(
             alt.datum.correlation > 0, alt.value("#1f77b4"), alt.value("#d62728"),
