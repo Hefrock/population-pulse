@@ -12,6 +12,16 @@ The ``events`` signal additionally maintains ``events_archive.parquet``: each
 day's upcoming-events snapshot is folded into a running history (see
 ``src/ingestion/events_archive.py``) rather than overwritten, so the events
 signal slowly accumulates real date overlap with historical hospital_demand.
+
+``transit``, ``weather``, ``bikeshare``, ``academic_calendar``, ``wastewater``,
+and ``hospital_demand`` all merge each fetch into their existing parquet file
+in place (see ``src/ingestion/timeseries_archive.py``) instead of overwriting
+it, so a wide one-time backfill plus the daily rolling fetch accumulate
+permanently rather than being capped at the rolling window. This is also how
+``bikeshare``'s GBFS fallback (a single "right now" snapshot) builds up a
+history over time, and how ``wastewater`` absorbs upstream revisions to
+already-fetched dates instead of getting stuck with a stale value forever
+(the merge's "newer fetch wins" tie-break applies here on purpose).
 """
 
 from __future__ import annotations
@@ -23,7 +33,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.ingestion import events_archive
+from src.ingestion import events_archive, timeseries_archive
 from src.providers import load_provider
 
 load_dotenv()
@@ -32,6 +42,54 @@ DATA_BRANCH_BASE = os.environ.get(
     "POPULATION_PULSE_DATA_URL",
     "https://raw.githubusercontent.com/hefrock/population-pulse/data",
 )
+
+# Key columns for deduplicating accumulated timeseries signals (see
+# timeseries_archive.merge). transit has multiple routes per timestamp;
+# weather and bikeshare are one row per timestamp; wastewater has multiple
+# pathogens per timestamp; hospital_demand has multiple metrics per
+# timestamp; academic_calendar has multiple schools per timestamp.
+#
+# Every signal not listed here is overwritten outright by each run with
+# whatever window was requested -- harmless for events (handled separately
+# via events_archive) but a real bug for anything whose fetcher already
+# returns real historical data: the daily cron's default trailing-365-day
+# window would silently erode years of accumulated history back down to one
+# year on its very next run. All six signals below already return full
+# historical data from their live/curated sources, so all six need to
+# accumulate rather than be overwritten.
+TIMESERIES_KEY_COLUMNS = {
+    "transit": ["timestamp", "route"],
+    "weather": ["timestamp"],
+    "bikeshare": ["timestamp"],
+    "academic_calendar": ["timestamp", "school"],
+    "wastewater": ["timestamp", "pathogen"],
+    "hospital_demand": ["timestamp", "metric"],
+}
+
+# The one legitimate exception: an *upcoming-events* snapshot with its own
+# events_archive.parquet mechanism (see events_archive.py) instead of
+# TIMESERIES_KEY_COLUMNS.
+NOT_ACCUMULATED = {"events"}
+
+
+def _check_archiving_coverage(signal_names) -> None:
+    """Fail loudly if a signal is wired into ``run()`` but not accumulated.
+
+    This is the exact bug class that silently erased years of wastewater and
+    hospital_demand history: a signal returning real historical data that
+    wasn't in ``TIMESERIES_KEY_COLUMNS``, so the daily cron's default
+    trailing-365-day window overwrote it down to one year on every run. A new
+    signal must be added to ``TIMESERIES_KEY_COLUMNS`` or ``NOT_ACCUMULATED``
+    before it can ship.
+    """
+    uncovered = set(signal_names) - set(TIMESERIES_KEY_COLUMNS) - NOT_ACCUMULATED
+    if uncovered:
+        raise RuntimeError(
+            f"{sorted(uncovered)} not in TIMESERIES_KEY_COLUMNS or NOT_ACCUMULATED -- "
+            "every run, including the daily cron's default trailing-365-day "
+            "window, would silently overwrite any accumulated history for "
+            "this signal. Add it to one of the two in src/ingestion/run.py."
+        )
 
 
 def _default_range() -> tuple[str, str]:
@@ -48,18 +106,26 @@ def run(city: str, start: str, end: str) -> None:
 
     signals = {
         "transit": provider.fetch_transit,
+        "bikeshare": provider.fetch_bikeshare,
         "weather": provider.fetch_weather,
         "events": provider.fetch_events,
         "academic_calendar": provider.fetch_academic_calendar,
         "wastewater": provider.fetch_wastewater,
         "hospital_demand": provider.fetch_hospital_demand,
     }
+    _check_archiving_coverage(signals)
 
     print(f"Ingesting {provider.name} from {start} to {end}")
     for name, fetch in signals.items():
         try:
             df = fetch(start, end)
             path = out_dir / f"{name}.parquet"
+
+            if name in TIMESERIES_KEY_COLUMNS:
+                archive_url = f"{DATA_BRANCH_BASE}/data/{city}/{name}.parquet"
+                existing = timeseries_archive.load_existing(path, archive_url, list(df.columns))
+                df = timeseries_archive.merge(existing, df, TIMESERIES_KEY_COLUMNS[name])
+
             df.to_parquet(path, index=False)
             print(f"  {name:16s} {len(df):6d} rows -> {path}")
 

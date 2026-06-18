@@ -37,7 +37,7 @@ DATA_BRANCH_BASE = os.environ.get(
     "https://raw.githubusercontent.com/hefrock/population-pulse/data",
 )
 
-SIGNALS = ["transit", "weather", "events", "academic_calendar", "wastewater", "hospital_demand"]
+SIGNALS = ["transit", "bikeshare", "weather", "events", "academic_calendar", "wastewater", "hospital_demand"]
 
 # Shared categorical palette so a given signal gets the same color everywhere
 # it appears (currently just the timeline, but keeps future charts consistent).

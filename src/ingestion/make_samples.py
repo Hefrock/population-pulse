@@ -54,6 +54,22 @@ def make_transit() -> None:
     pd.DataFrame(rows).to_csv(SAMPLES / "mbta_ridership_sample.csv", index=False)
 
 
+def make_bikeshare() -> None:
+    """Daily ride-count proxy: strong summer/winter seasonality (Bluebikes
+    ridership drops to a fraction of its peak in deep winter) plus a weekday
+    commute bump -- the other "daily commute" mobility signal alongside
+    transit, but with a much bigger seasonal swing."""
+    days = _date_range()
+    rows = []
+    for d in days:
+        # 0.15 at the winter trough (~day 15) to 1.0 at the summer peak (~day 197).
+        seasonal = 0.15 + 0.85 * (0.5 - 0.5 * np.cos(2 * np.pi * (d.dayofyear - 15) / 365))
+        weekday_factor = 1.15 if d.dayofweek < 5 else 0.9  # commute bump on weekdays
+        value = 4000 * seasonal * weekday_factor * RNG.normal(1.0, 0.08)
+        rows.append({"timestamp": d, "value": round(max(value, 0))})
+    pd.DataFrame(rows).to_csv(SAMPLES / "bluebikes_sample.csv", index=False)
+
+
 def make_hospital() -> None:
     """Weekly ED respiratory visits with a planted winter surge."""
     weeks = _week_range()
@@ -164,6 +180,7 @@ def main() -> None:
     SAMPLES.mkdir(parents=True, exist_ok=True)
     Path("data").mkdir(exist_ok=True)
     make_transit()
+    make_bikeshare()
     make_weather()
     make_hospital()
     make_wastewater()

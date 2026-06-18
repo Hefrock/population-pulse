@@ -48,6 +48,22 @@ transit:
     - Green-D
     - Green-E
 
+bikeshare:
+  provider: bluebikes
+  # Bluebikes (Lyft) trip-history archive — monthly CSV/ZIP files on a public
+  # S3 bucket, 2018-present, no API key. Aggregated to daily system-wide ride
+  # counts: the "daily commute" sub-hypothesis's other mobility signal
+  # alongside MBTA ridership.
+  trip_history:
+    base_url: https://s3.amazonaws.com/hubway-data
+
+  # Fallback: GBFS station_status snapshot (bikes currently docked,
+  # system-wide). This is a STOCK measure, not the FLOW (rides/day) that
+  # trip_history provides -- a rough proxy only, accumulated daily via
+  # timeseries_archive since GBFS itself carries no history.
+  gbfs:
+    base_url: https://gbfs.bluebikes.com/gbfs
+
 weather:
   provider: open_meteo
   # Open-Meteo needs no API key. We pull temperature, heat index, and

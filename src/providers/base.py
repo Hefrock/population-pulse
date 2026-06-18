@@ -58,6 +58,14 @@ class CityDataProvider(ABC):
         """
 
     @abstractmethod
+    def fetch_bikeshare(self, start: str, end: str) -> pd.DataFrame:
+        """Bike-share activity between ``start`` and ``end`` (ISO dates).
+
+        Returns columns: ``timestamp``, ``value`` (daily ride count, a
+        commute/mobility flow proxy alongside transit).
+        """
+
+    @abstractmethod
     def fetch_weather(self, start: str, end: str) -> pd.DataFrame:
         """Hourly weather. Columns: ``timestamp`` plus configured variables."""
 
