@@ -46,8 +46,24 @@ COLOR_SCHEME = "tableau10"
 st.set_page_config(page_title="population-pulse", layout="wide")
 
 
+def _local_data_fingerprint(city: str) -> tuple[float, ...]:
+    """Mtime per local signal file, passed into _load_signals as a cache key.
+
+    Without this, st.cache_data(ttl=3600) only keys on `city`, so a pipeline
+    run that rewrites data/<city>/*.parquet while the dashboard process is
+    still alive keeps serving the old (possibly date-range-narrower) cached
+    frames for up to an hour — no widening of the sidebar date range can
+    reveal data that was never reloaded into memory.
+    """
+    data_dir = Path("data") / city
+    return tuple(
+        (data_dir / f"{s}.parquet").stat().st_mtime if (data_dir / f"{s}.parquet").exists() else -1.0
+        for s in SIGNALS
+    )
+
+
 @st.cache_data(ttl=3600)
-def _load_signals(city: str) -> dict[str, pd.DataFrame]:
+def _load_signals(city: str, fingerprint: tuple[float, ...]) -> dict[str, pd.DataFrame]:
     """Load signals: local files → data branch → sample data."""
     data_dir = Path("data") / city
 
@@ -142,10 +158,14 @@ def _signal_freshness(raw_signals: dict[str, pd.DataFrame]) -> pd.DataFrame:
     for name in SIGNALS:
         df = raw_signals.get(name, pd.DataFrame())
         if df.empty or "timestamp" not in df.columns:
-            rows.append({"signal": name, "latest data point": "no data"})
+            rows.append({"signal": name, "earliest data point": "no data", "latest data point": "no data"})
             continue
-        latest = pd.to_datetime(df["timestamp"], utc=True).max()
-        rows.append({"signal": name, "latest data point": latest.date().isoformat()})
+        ts = pd.to_datetime(df["timestamp"], utc=True)
+        rows.append({
+            "signal": name,
+            "earliest data point": ts.min().date().isoformat(),
+            "latest data point": ts.max().date().isoformat(),
+        })
     return pd.DataFrame(rows)
 
 
@@ -210,7 +230,7 @@ def _render_overview(
     with col_freshness:
         st.markdown("#### Data freshness")
         st.dataframe(_signal_freshness(raw_signals), width="stretch", hide_index=True)
-        st.caption("Latest timestamp available per signal, regardless of the date range selected above.")
+        st.caption("Earliest/latest timestamp available per signal, regardless of the date range selected above.")
 
 
 def _render_timeline(aligned: pd.DataFrame, events_df: pd.DataFrame) -> None:
@@ -222,7 +242,9 @@ def _render_timeline(aligned: pd.DataFrame, events_df: pd.DataFrame) -> None:
     )
 
     columns = list(aligned.columns)
-    selected = st.multiselect("Signals to show", options=columns, default=columns)
+    # Default to the dependent variable plus the README's most robust drivers, not all 8 signals.
+    default_signals = [c for c in ("hospital_demand", "transit", "weather", "bikeshare") if c in columns] or columns
+    selected = st.multiselect("Signals to show", options=columns, default=default_signals)
     if not selected:
         st.info("Select at least one signal to plot.")
         return
@@ -416,20 +438,10 @@ def main() -> None:
 
     with st.sidebar:
         city = st.selectbox("City", ["boston"], index=0)
-        st.markdown("**Date range**")
-        default_end = pd.Timestamp.now(tz="UTC").normalize()
-        default_start = default_end - pd.Timedelta(days=365)
-        start_date = st.date_input("From", value=default_start.date())
-        end_date = st.date_input("To", value=default_end.date())
-        st.markdown("---")
-        st.caption(
-            "Data refreshes daily via GitHub Actions. "
-            "No API keys are needed to view this dashboard."
-        )
 
     with st.spinner("Loading data…"):
         try:
-            raw_signals = _load_signals(city)
+            raw_signals = _load_signals(city, _local_data_fingerprint(city))
         except Exception as exc:
             st.error(f"Could not load data: {exc}")
             st.info(
@@ -437,6 +449,41 @@ def main() -> None:
                 "`python -m src.ingestion.make_samples`"
             )
             return
+
+    default_end = pd.Timestamp.now(tz="UTC").normalize()
+    default_start = default_end - pd.Timedelta(days=365)
+    earliest_per_signal = [
+        pd.to_datetime(df["timestamp"], utc=True).min()
+        for df in raw_signals.values()
+        if not df.empty and "timestamp" in df.columns
+    ]
+    earliest_date = min(earliest_per_signal).date() if earliest_per_signal else default_start.date()
+
+    def _set_date_range(start, end) -> None:
+        st.session_state.date_from = start
+        st.session_state.date_to = end
+
+    with st.sidebar:
+        st.markdown("**Date range**")
+        st.session_state.setdefault("date_from", default_start.date())
+        st.session_state.setdefault("date_to", default_end.date())
+
+        preset_cols = st.columns(4)
+        presets = [("1Y", 365), ("2Y", 730), ("5Y", 1825), ("All", None)]
+        for col, (label, days_back) in zip(preset_cols, presets):
+            range_start = earliest_date if days_back is None else (default_end - pd.Timedelta(days=days_back)).date()
+            col.button(
+                label, width="stretch",
+                on_click=_set_date_range, args=(range_start, default_end.date()),
+            )
+
+        start_date = st.date_input("From", key="date_from")
+        end_date = st.date_input("To", key="date_to")
+        st.markdown("---")
+        st.caption(
+            "Data refreshes daily via GitHub Actions. "
+            "No API keys are needed to view this dashboard."
+        )
 
     start_ts = pd.Timestamp(start_date, tz="UTC")
     end_ts = pd.Timestamp(end_date, tz="UTC")

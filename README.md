@@ -150,7 +150,7 @@ population-pulse/
 │   │                    #   academic_calendar, wastewater, ...)
 │   ├── analysis/        # timeline alignment, lagged correlation, count/surge regression
 │   └── dashboard/       # Streamlit app
-├── tests/               # pytest suite (67 tests)
+├── tests/               # pytest suite (99 tests)
 ├── docs/                # narrated walkthrough
 └── .github/workflows/   # daily ingestion + PR test gate
 ```
@@ -169,53 +169,73 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 
 ## What we've found so far
 
-**tl;dr:** Wastewater Influenza A and RSV levels (same week, lag 0) are real,
-modest predictors of a respiratory ED "surge" week (AUC-ROC 0.67–0.68, both
-p<0.01) — the project's strongest result so far. A re-run of this analysis
-briefly stopped reproducing the lag-0 pick (flagged below as "not yet
-resolved") — that's now resolved: it was a real bug (`wastewater` and
-`hospital_demand` weren't accumulating history like `transit`/`weather`
-already did, so the daily cron was silently eroding both back to a ~365-day
-window every night) compounded by a genuinely close lag-0-vs-lag-4 call. Now
-fixed; see "An open problem found while re-running this analysis" below for
-the full account. Separately, now that transit, weather, and the new
-bikeshare signal have ~7 years of real history (up from 47–81 weeks),
+**tl;dr:** The most robust results so far come from transit, weather, and
+bikeshare, now backed by ~7 years of real history (up from 47–81 weeks):
 transit and weather **both reach significance** in the Negative-Binomial
 count model (p=0.011, p=0.024) — reversing the earlier "none of the three
 survive correction" conclusion — and bikeshare's surge logistic regression
-(AUC=0.66) is the strongest of any driver tested so far. Academic calendar is
-unchanged (its real history wasn't part of this backfill). Details and
-caveats below.
+(AUC=0.66) is the strongest of any driver tested so far. **Wastewater's
+lag-0 finding (Influenza A/RSV, AUC 0.67–0.68, p<0.01) no longer reproduces
+as the pipeline's automatic "best lag" pick** — `lagged_cross_correlation`
+now selects lag 4 for Influenza A and lag 7 for RSV, neither of which is a
+useful predictor (AUC 0.41/0.61, not significant). The signal at lag 0
+specifically hasn't gone away — tested directly it's *stronger* than the
+original headline (AUC 0.74/0.73, now also significant in the
+Negative-Binomial count model, p=0.009/0.012) — but it loses the automatic
+selection by a hair's-breadth margin in raw correlation (+0.44 vs. −0.45)
+that a single upstream data revision was enough to flip. That's a real
+finding about the fragility of `argmax(abs(corr))` lag-selection on close
+calls, not a sign wastewater stopped mattering. A separate, genuine
+accumulation bug (`wastewater`/`hospital_demand`/`academic_calendar` weren't
+merging history like `transit`/`weather` already did, so the daily cron was
+silently eroding both back to a ~365-day window every night) is also fixed
+now — that stops future erosion, but doesn't undo the data revision already
+baked into today's wastewater values. See "Update" below for the full
+account. Academic calendar is unchanged (its real history wasn't part of
+this backfill). Details and caveats below.
 
 This is the honest result of running the pipeline end-to-end on ~3.5 years of
 real data (WastewaterSCAN wastewater + MA DPH respiratory ED visits, Dec 2022 –
 May 2026, ~180 weekly observations). `src/analysis/regression.py` turns each
 week into a binary "surge" label (deseasonalized respiratory ED-visit residual
 in the top quartile — i.e. running hot *for that time of year*) and fits a
-logistic regression of each wastewater pathogen against it:
+logistic regression of each wastewater pathogen against it. Two different
+lags matter here, for two different reasons:
 
-| Pathogen | Best lag | AUC-ROC | p-value |
-|---|---|---|---|
-| Influenza A | 0 weeks | 0.68 | 0.0007 |
-| RSV | 0 weeks | 0.67 | 0.0002 (significant out to +3 weeks) |
-| SARS-CoV-2 | — | ~0.5–0.6 | not significant at any lag 0–8 |
+| Pathogen | At lag 0 (forced) — AUC-ROC (p) | NB count-model p-value | Auto-selected "best lag" today | AUC-ROC (p) at that lag |
+|---|---|---|---|---|
+| Influenza A | 0.74 (p=0.0001) | 0.0092 | 4 weeks | 0.41 (p=0.48, not significant) |
+| RSV | 0.73 (p<0.0001) | 0.0118 | 7 weeks | 0.61 (p=0.53, not significant) |
+| SARS-CoV-2 | 0.63 (p=0.18, n.s.) | — | 2 weeks | 0.42 (p=0.95, not significant) |
 
-**Reads as a real, modest signal:** same-week Influenza A and RSV wastewater
-levels meaningfully separate "surge" from "normal" weeks (0.5 = chance), each
-individually significant. RSV's signal persists for a few weeks, which is at
-least directionally consistent with the "wastewater leads clinical demand"
-hypothesis, though "lag 0" at weekly resolution doesn't prove a multi-day
-lead. SARS-CoV-2 wastewater shows nothing useful for surge prediction in this
-window — a negative result, not a bug.
+**Reads as a real signal at lag 0 — but the pipeline's automatic lag
+selection currently picks the wrong lag.** Same-week Influenza A and RSV
+wastewater levels meaningfully separate "surge" from "normal" weeks both in
+the surge-logistic AUC and, with the current data, in the Negative-Binomial
+count model too. But `lagged_cross_correlation` picks the "best lag" purely
+by the largest `|Pearson correlation|` across lags 0–8, and right now lag 4
+(Influenza A, corr −0.448) and lag 7 (RSV, corr −0.150) edge out lag 0 (corr
++0.439 / +0.137) by a tiny margin in that one statistic, even though lag 0 is
+clearly the more *predictive* lag by every other measure (AUC, both
+p-values). That's a real limitation of `argmax(abs(corr))` as a
+lag-selection rule on a close call, not evidence the relationship
+disappeared — and it means the dashboard's auto-suggested lag for these two
+pathogens is, right now, the less useful one. SARS-CoV-2 wastewater shows
+nothing useful for surge prediction at any lag — a negative result, not a
+bug, unchanged from before.
 
-**A methodology lesson that's now baked into the code:** the same drivers fit
-with a Poisson GLM (`fit_count_regression(..., family="poisson")`) come out
-*highly* "significant" (p≈0) with an AIC an order of magnitude worse than the
-Negative-Binomial fit, because weekly ED-visit counts are heavily
-overdispersed and Poisson assumes variance = mean. The Negative-Binomial fit
-on the same data shows neither pathogen significant once the AIC is corrected
-for overdispersion. Lesson: **don't trust a Poisson p-value on real syndromic
-count data** — always compare against `family="negative_binomial"`.
+**A methodology lesson that's now baked into the code:** at lag 0, both
+pathogens fit with a Poisson GLM (`fit_count_regression(..., family="poisson")`)
+come out *highly* "significant" (p≈0) with an AIC an order of magnitude worse
+than the Negative-Binomial fit (Influenza A: Poisson AIC 74,404 vs. NB 3,581;
+RSV: 87,538 vs. 3,603), because weekly ED-visit counts are heavily
+overdispersed and Poisson assumes variance = mean. Once that's corrected,
+both pathogens are *still* significant in the Negative-Binomial fit at lag 0
+(p=0.009, p=0.012) — but neither is at the lag the automatic selector
+currently picks instead (p=0.38, p=0.49), the same lag-0-vs-auto-lag split as
+above. Lesson: **don't trust a Poisson p-value on real syndromic count
+data** — always compare against `family="negative_binomial"`, and don't
+assume the automatically-selected lag is the most informative one to fit.
 
 ### The other three sub-hypotheses, on real data
 
@@ -254,37 +274,42 @@ rather than a real leading-indicator relationship. Worth treating as
 descriptive, not as evidence for the commute hypothesis specifically, until a
 matched-baseline study (Phase 2) can separate the two.
 
-**Update — the wastewater lag flip is resolved, and it was a real bug:**
-re-running the wastewater lag search above (same `lagged_cross_correlation`
-call, same real data) had stopped picking lag 0 as the best lag for Influenza
-A or RSV — it picked lag 4 (corr -0.45, vs. +0.44 at lag 0) and lag 7
-respectively, both close in magnitude but opposite in sign to the lag-0
-result this section's headline number is based on. Ruled out first: it
-wasn't a search-boundary or tail/reporting-lag artifact (persisted after
-trimming the most recent 12 weeks and after widening the search to 16 weeks).
-The actual cause: `run.py` only merged `transit`/`weather`/`bikeshare` fetches
-into their existing parquet in place — `wastewater` and `hospital_demand`
-were still being *overwritten* by every run, including the daily cron, which
-always runs with the default trailing-365-day window. GitHub Actions history
+**Update — the accumulation bug is fixed, but the lag-0 finding still
+doesn't auto-reproduce:** re-running the wastewater lag search above (same
+`lagged_cross_correlation` call, same real data) stopped picking lag 0 as the
+best lag for Influenza A or RSV — it picks lag 4 (corr −0.448, vs. +0.439 at
+lag 0) and lag 7 (corr −0.150, vs. +0.137 at lag 0) respectively, both close
+in magnitude but opposite in sign to the lag-0 result this section's original
+headline number was based on. Ruled out first: it wasn't a search-boundary or
+tail/reporting-lag artifact (persisted after trimming the most recent 12
+weeks and after widening the search to 16 weeks). One real cause, now fixed:
+`run.py` only merged `transit`/`weather`/`bikeshare` fetches into their
+existing parquet in place — `wastewater` and `hospital_demand` were still
+being *overwritten* by every run, including the daily cron, which always
+runs with the default trailing-365-day window. GitHub Actions history
 confirms 8 scheduled runs executed between the headline table being written
 (Jun 10) and this discrepancy being investigated (Jun 18), each silently
-re-clipping both files down to the trailing year. The wide `--start
-2018-07-01` backfill on Jun 18 happened to restore full history as a side
-effect (one `run.py` invocation fetches every signal with the same window),
-but that restore re-pulled wastewater's values fresh from the live
-WastewaterSCAN feed rather than recovering the Jun 10 snapshot — and
-wastewater surveillance values are routinely revised after first publication.
-A genuinely close call (lag 0 vs. lag 4, opposite sign, similar magnitude) is
-exactly the kind of result one historical revision is enough to flip via
-`lagged_cross_correlation`'s `argmax(abs(corr))` selection. Fix: `wastewater`,
-`hospital_demand`, and `academic_calendar` now also accumulate via
-`timeseries_archive.merge()` instead of being overwritten (see "Known
+re-clipping both files down to the trailing year. `wastewater`,
+`hospital_demand`, and `academic_calendar` now accumulate via
+`timeseries_archive.merge()` like the other signals do (see "Known
 limitations"), so the next scheduled run won't silently erase years of
-history again — but the underlying lag-selection fragility (a coin-flip
-between two opposite-sign, similar-magnitude lags) is unchanged and worth
-keeping in mind for any driver, not just wastewater: a single `argmax`
-pick is not a robust substitute for a sensitivity range when two lags are
-this close.
+history again.
+
+**What that fix does *not* do: restore the original Jun 10 wastewater
+snapshot.** The wide `--start 2018-07-01` backfill on Jun 18 re-pulled
+wastewater's values fresh from the live WastewaterSCAN feed rather than
+recovering what was originally fetched on Jun 10 — and wastewater
+surveillance values are routinely revised after first publication, so
+today's archive reflects the revised values, not the original ones.
+Re-checking after the bug fix (same code, same data, run again today)
+confirms the lag-4/lag-7 pick is the current, live state, not a transient
+blip the fix corrected: `argmax(abs(corr))` genuinely still selects lag 4
+and lag 7 on today's data. The lag-0 relationship itself hasn't weakened —
+tested directly it's stronger than before (see the table above) — so the
+practical lesson is narrower than "the finding disappeared": a single scalar
+`|correlation|` pick is not a robust substitute for checking nearby lags'
+downstream predictive value (AUC, regression p-value) when two lags are this
+close, and that's true for any driver, not just wastewater.
 
 **Events couldn't be tested at all, but the gap is now closing:**
 Ticketmaster and Boston.gov civic events are *upcoming-events* APIs (rolling
@@ -396,7 +421,11 @@ In the spirit of an honest status report, not just a feature list:
   below — plus a guaranteed-different historical snapshot) is the resolved
   explanation for the lag flip. All three signals are now in `run.py`'s
   `TIMESERIES_KEY_COLUMNS` and accumulate the same way transit/weather/bikeshare
-  do, so the *next* scheduled run won't repeat this.
+  do, so the *next* scheduled run won't repeat this. This fixes the
+  *accumulation* bug going forward, but it can't undo the Jun 18 revision
+  already baked into today's wastewater values — see "What we've found so
+  far" for how that revision, not the bug, is what's currently flipping the
+  wastewater lag pick.
 - **Events have zero overlap with historical hospital demand (today) — but
   `events_archive.parquet` is now accumulating one.** Ticketmaster and
   Boston.gov civic events are upcoming-events APIs (rolling ~365 days
@@ -425,7 +454,7 @@ In the spirit of an honest status report, not just a feature list:
 | Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series, lagged regression panel |
 | Cross-correlation analysis | Working — `src/analysis/correlate.py`, used by the dashboard |
 | Count + surge regression | Working, in the dashboard — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC), tested against real data for all four sub-hypotheses |
-| Test suite | 77 tests, all passing |
+| Test suite | 99 tests, all passing |
 | Phase 2 event studies | Planned |
 | Second city | Architecture ready, untested |
 
