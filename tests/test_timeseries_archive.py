@@ -18,6 +18,14 @@ def _weather_row(ts: str, temperature_2m: float):
     return {"timestamp": pd.Timestamp(ts, tz="America/New_York"), "temperature_2m": temperature_2m}
 
 
+def _wastewater_row(ts: str, pathogen: str, value: float):
+    return {"timestamp": pd.Timestamp(ts, tz="America/New_York"), "pathogen": pathogen, "value": value}
+
+
+def _hospital_row(ts: str, metric: str, value: float):
+    return {"timestamp": pd.Timestamp(ts, tz="America/New_York"), "metric": metric, "value": value}
+
+
 # --- merge: transit (key = timestamp, route) ----------------------------------
 
 
@@ -102,6 +110,86 @@ def test_merge_empty_new_keeps_existing():
 
     assert len(out) == 1
     assert out.iloc[0]["temperature_2m"] == 32.0
+
+
+# --- merge: wastewater (key = timestamp, pathogen) -----------------------------
+
+
+def test_merge_wastewater_preserves_history_outside_narrow_refetch_window():
+    """The bug this guards against: wastewater/hospital_demand/academic_calendar
+    used to be overwritten outright instead of merged, so the daily cron's
+    default trailing-365-day window silently erased older accumulated history
+    on every run. A signal merged on (timestamp, pathogen) must keep rows
+    outside a later narrow re-fetch's window."""
+    existing = pd.DataFrame([_wastewater_row("2022-12-12 00:00", "Influenza A", 10.0)])
+    new = pd.DataFrame([_wastewater_row("2026-06-01 00:00", "Influenza A", 20.0)])
+
+    out = timeseries_archive.merge(existing, new, key_columns=["timestamp", "pathogen"])
+
+    assert len(out) == 2
+    assert set(out["timestamp"]) == {
+        pd.Timestamp("2022-12-12 00:00", tz="America/New_York"),
+        pd.Timestamp("2026-06-01 00:00", tz="America/New_York"),
+    }
+
+
+def test_merge_wastewater_keeps_distinct_pathogens_at_same_timestamp():
+    existing = pd.DataFrame([_wastewater_row("2025-01-01 00:00", "Influenza A", 10.0)])
+    new = pd.DataFrame([_wastewater_row("2025-01-01 00:00", "RSV", 5.0)])
+
+    out = timeseries_archive.merge(existing, new, key_columns=["timestamp", "pathogen"])
+
+    assert len(out) == 2
+    assert set(out["pathogen"]) == {"Influenza A", "RSV"}
+
+
+def test_merge_wastewater_refetch_overwrites_revised_value():
+    """A re-fetched date is refreshed to the newer value -- deliberate, since
+    upstream wastewater surveillance values get revised after publication and
+    the pipeline should absorb the correction rather than stay stale forever."""
+    existing = pd.DataFrame([_wastewater_row("2025-01-01 00:00", "Influenza A", 10.0)])
+    new = pd.DataFrame([_wastewater_row("2025-01-01 00:00", "Influenza A", 12.5)])
+
+    out = timeseries_archive.merge(existing, new, key_columns=["timestamp", "pathogen"])
+
+    assert len(out) == 1
+    assert out.iloc[0]["value"] == 12.5
+
+
+# --- merge: hospital_demand (key = timestamp, metric) ---------------------------
+
+
+def test_merge_hospital_demand_preserves_history_outside_narrow_refetch_window():
+    existing = pd.DataFrame([_hospital_row("2019-06-30 00:00", "ed_visits_respiratory", 100.0)])
+    new = pd.DataFrame([_hospital_row("2026-06-01 00:00", "ed_visits_respiratory", 150.0)])
+
+    out = timeseries_archive.merge(existing, new, key_columns=["timestamp", "metric"])
+
+    assert len(out) == 2
+    assert set(out["timestamp"]) == {
+        pd.Timestamp("2019-06-30 00:00", tz="America/New_York"),
+        pd.Timestamp("2026-06-01 00:00", tz="America/New_York"),
+    }
+
+
+# --- run.py wiring -----------------------------------------------------------
+
+
+def test_run_timeseries_key_columns_covers_every_self_archiving_signal():
+    """Locks in the fix: every signal whose fetcher already returns real
+    historical data (not just events, which has its own archive mechanism)
+    must accumulate via merge, or the daily cron's default narrow window
+    erodes it back down to ~365 days on its very next run."""
+    from src.ingestion import run
+
+    assert run.TIMESERIES_KEY_COLUMNS == {
+        "transit": ["timestamp", "route"],
+        "weather": ["timestamp"],
+        "bikeshare": ["timestamp"],
+        "academic_calendar": ["timestamp", "school"],
+        "wastewater": ["timestamp", "pathogen"],
+        "hospital_demand": ["timestamp", "metric"],
+    }
 
 
 # --- load_existing ---------------------------------------------------------------

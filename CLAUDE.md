@@ -47,7 +47,7 @@ src/analysis/regression.py # multi-driver lagged Poisson/NB regression + surge-l
 src/dashboard/app.py       # Streamlit; reads Parquet, no API keys — uses correlate + regression
 src/ingestion/make_samples.py  # synthetic data with planted signals for offline/CI
 src/ingestion/events_archive.py  # folds daily events snapshots into events_archive.parquet
-src/ingestion/timeseries_archive.py  # merges transit/weather fetches into their parquet in place
+src/ingestion/timeseries_archive.py  # merges each self-archiving signal's fetch into its parquet in place
 ```
 
 ### Signals (drivers + the dependent variable)
@@ -67,15 +67,29 @@ src/ingestion/timeseries_archive.py  # merges transit/weather fetches into their
 deduplicated by date + event name) — see `src/ingestion/events_archive.py` and
 README's "Known limitations" for why this exists.
 
-`transit`, `weather`, and `bikeshare` are merged into their existing
-`data/<city>/{transit,weather,bikeshare}.parquet` in place by `run.py` (each
-fetch folded into the accumulated file, deduplicated by `timestamp`[, `route`])
-instead of overwriting it — see `src/ingestion/timeseries_archive.py`. This
-removes the ~1-year rolling cap and is the prerequisite for a real historical
-backfill (MBTA gated entries to 2014, Open-Meteo archive decades further).
-`bikeshare`'s GBFS fallback in particular has *no* history of its own (a
-"right now" snapshot, like MBTA's live-vehicle fallback), so this accumulation
-is how it builds one over time.
+`transit`, `weather`, `bikeshare`, `academic_calendar`, `wastewater`, and
+`hospital_demand` are all merged into their existing `data/<city>/*.parquet`
+in place by `run.py` (each fetch folded into the accumulated file, deduped on
+a per-signal key — `timestamp`[, `route`/`school`/`pathogen`/`metric`])
+instead of overwriting it — see `src/ingestion/timeseries_archive.py` and
+`run.py`'s `TIMESERIES_KEY_COLUMNS`. This removes the ~1-year rolling cap and
+is the prerequisite for a real historical backfill (MBTA gated entries to
+2014, Open-Meteo archive decades further). `bikeshare`'s GBFS fallback in
+particular has *no* history of its own (a "right now" snapshot, like MBTA's
+live-vehicle fallback), so this accumulation is how it builds one over time.
+**Every signal whose fetcher already returns real historical data belongs in
+`TIMESERIES_KEY_COLUMNS`** — `events` is the one legitimate exception (an
+*upcoming-events* snapshot with its own `events_archive.parquet` mechanism
+instead, see below). Forgetting to add a new self-archiving signal here is a
+real bug, not a style nit: the daily cron always runs with the default
+trailing-365-day window, so an un-merged signal gets silently overwritten
+down to ~365 days on its very next scheduled run, discarding however much
+history a backfill had just restored. This is exactly what happened to
+`wastewater` and `hospital_demand` before they were added here — see
+README's "What we've found so far" for the wastewater incident this
+uncovered. The same "newer fetch wins" dedup tie-break also lets `wastewater`
+absorb legitimate upstream revisions to already-published dates instead of
+being stuck with a stale value forever.
 
 `hospital_demand` is the **dependent variable**; everything else is a driver. It
 currently represents respiratory-illness ED demand specifically, not all-cause

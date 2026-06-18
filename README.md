@@ -171,16 +171,21 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 
 **tl;dr:** Wastewater Influenza A and RSV levels (same week, lag 0) are real,
 modest predictors of a respiratory ED "surge" week (AUC-ROC 0.67–0.68, both
-p<0.01) — the project's strongest result so far, though see the note below on
-re-running this since the transit/weather backfill (the wastewater lag-0
-finding did not reproduce cleanly — flagged, not yet resolved). Now that
-transit, weather, and the new bikeshare signal have ~7 years of real history
-(up from 47–81 weeks), transit and weather **both reach significance** in the
-Negative-Binomial count model (p=0.011, p=0.024) — reversing the earlier
-"none of the three survive correction" conclusion — and bikeshare's surge
-logistic regression (AUC=0.66) is the strongest of any driver tested so far.
-Academic calendar is unchanged (its real history wasn't part of this
-backfill). Details and caveats below.
+p<0.01) — the project's strongest result so far. A re-run of this analysis
+briefly stopped reproducing the lag-0 pick (flagged below as "not yet
+resolved") — that's now resolved: it was a real bug (`wastewater` and
+`hospital_demand` weren't accumulating history like `transit`/`weather`
+already did, so the daily cron was silently eroding both back to a ~365-day
+window every night) compounded by a genuinely close lag-0-vs-lag-4 call. Now
+fixed; see "An open problem found while re-running this analysis" below for
+the full account. Separately, now that transit, weather, and the new
+bikeshare signal have ~7 years of real history (up from 47–81 weeks),
+transit and weather **both reach significance** in the Negative-Binomial
+count model (p=0.011, p=0.024) — reversing the earlier "none of the three
+survive correction" conclusion — and bikeshare's surge logistic regression
+(AUC=0.66) is the strongest of any driver tested so far. Academic calendar is
+unchanged (its real history wasn't part of this backfill). Details and
+caveats below.
 
 This is the honest result of running the pipeline end-to-end on ~3.5 years of
 real data (WastewaterSCAN wastewater + MA DPH respiratory ED visits, Dec 2022 –
@@ -249,21 +254,37 @@ rather than a real leading-indicator relationship. Worth treating as
 descriptive, not as evidence for the commute hypothesis specifically, until a
 matched-baseline study (Phase 2) can separate the two.
 
-**An open problem found while re-running this analysis:** redoing the
-wastewater lag search above (same `lagged_cross_correlation` call, same
-real data) no longer picks lag 0 as the best lag for Influenza A or RSV —
-it now picks lag 4 (corr -0.45, vs. +0.44 at lag 0) and lag 7 respectively,
-both close in magnitude but opposite in sign to the lag-0 result this
-section's headline number is based on. This wasn't caused by the
-transit/weather/bikeshare backfill (wastewater wasn't part of it) and isn't
-a tail/reporting-lag artifact (it persists after trimming the most recent 12
-weeks) — it appears the lag-0-vs-lag-4 pick for Influenza A is a genuinely
-close call that flipped between whenever the table above was generated and
-now, most likely because the underlying real-time WastewaterSCAN/MA DPH
-values have been revised since. **Not yet resolved** — the wastewater numbers
-above are left as previously reported pending a decision on how to handle
-this instability (e.g. preferring lag 0 by hypothesis rather than by raw
-`argmax(abs(corr))`, or reporting a sensitivity range instead of one lag).
+**Update — the wastewater lag flip is resolved, and it was a real bug:**
+re-running the wastewater lag search above (same `lagged_cross_correlation`
+call, same real data) had stopped picking lag 0 as the best lag for Influenza
+A or RSV — it picked lag 4 (corr -0.45, vs. +0.44 at lag 0) and lag 7
+respectively, both close in magnitude but opposite in sign to the lag-0
+result this section's headline number is based on. Ruled out first: it
+wasn't a search-boundary or tail/reporting-lag artifact (persisted after
+trimming the most recent 12 weeks and after widening the search to 16 weeks).
+The actual cause: `run.py` only merged `transit`/`weather`/`bikeshare` fetches
+into their existing parquet in place — `wastewater` and `hospital_demand`
+were still being *overwritten* by every run, including the daily cron, which
+always runs with the default trailing-365-day window. GitHub Actions history
+confirms 8 scheduled runs executed between the headline table being written
+(Jun 10) and this discrepancy being investigated (Jun 18), each silently
+re-clipping both files down to the trailing year. The wide `--start
+2018-07-01` backfill on Jun 18 happened to restore full history as a side
+effect (one `run.py` invocation fetches every signal with the same window),
+but that restore re-pulled wastewater's values fresh from the live
+WastewaterSCAN feed rather than recovering the Jun 10 snapshot — and
+wastewater surveillance values are routinely revised after first publication.
+A genuinely close call (lag 0 vs. lag 4, opposite sign, similar magnitude) is
+exactly the kind of result one historical revision is enough to flip via
+`lagged_cross_correlation`'s `argmax(abs(corr))` selection. Fix: `wastewater`,
+`hospital_demand`, and `academic_calendar` now also accumulate via
+`timeseries_archive.merge()` instead of being overwritten (see "Known
+limitations"), so the next scheduled run won't silently erase years of
+history again — but the underlying lag-selection fragility (a coin-flip
+between two opposite-sign, similar-magnitude lags) is unchanged and worth
+keeping in mind for any driver, not just wastewater: a single `argmax`
+pick is not a robust substitute for a sensitivity range when two lags are
+this close.
 
 **Events couldn't be tested at all, but the gap is now closing:**
 Ticketmaster and Boston.gov civic events are *upcoming-events* APIs (rolling
@@ -355,6 +376,27 @@ In the spirit of an honest status report, not just a feature list:
   that far, since 2018-07-01 already fully covers `hospital_demand`'s real
   history (MA DPH data starts 2019-06-30), so there's little marginal value
   in going earlier than the dependent variable itself.
+- ~~**`wastewater`, `hospital_demand`, and `academic_calendar` had the same
+  ~1-year-cap bug, and it silently erased the data behind the wastewater
+  headline result.**~~ **Fixed.** Only `transit`/`weather`/`bikeshare` were
+  ever added to `run.py`'s merge-on-fetch path — `wastewater` and
+  `hospital_demand` (the dependent variable!) were still being overwritten
+  outright by every run, including the **daily cron**, which always runs
+  with the default trailing-365-day window. Confirmed in the Actions history:
+  8 scheduled runs executed between the wastewater table being written
+  (Jun 10) and the next time it was re-checked (Jun 18), each one silently
+  re-clipping `wastewater.parquet`/`hospital_demand.parquet` down to the
+  trailing year. The Jun 18 backfill happened to restore full history as a
+  side effect (it fetches every signal with the same wide `--start`/`--end`),
+  but that restoration re-pulled wastewater's historical values fresh from
+  the live WastewaterSCAN feed rather than recovering whatever was
+  originally fetched on Jun 10 — and wastewater surveillance values are
+  routinely revised after publication. That combination (a `lagged_cross_correlation`
+  pick that was already a near-tie — lag 0 at +0.44 vs. lag 4 at -0.45, see
+  below — plus a guaranteed-different historical snapshot) is the resolved
+  explanation for the lag flip. All three signals are now in `run.py`'s
+  `TIMESERIES_KEY_COLUMNS` and accumulate the same way transit/weather/bikeshare
+  do, so the *next* scheduled run won't repeat this.
 - **Events have zero overlap with historical hospital demand (today) — but
   `events_archive.parquet` is now accumulating one.** Ticketmaster and
   Boston.gov civic events are upcoming-events APIs (rolling ~365 days
