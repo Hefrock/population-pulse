@@ -81,6 +81,32 @@ def seasonal_residual(series: pd.Series, window: int | None = None) -> pd.Series
     return s - s.rolling(window, center=True, min_periods=1).mean()
 
 
+def driver_correlation_matrix(
+    aligned: pd.DataFrame,
+    drivers: list[str] | None = None,
+    deseasonalize: bool = True,
+) -> pd.DataFrame:
+    """Pairwise correlation between driver columns of an ``align()`` frame.
+
+    Per-driver correlation against the response (``lagged_cross_correlation``)
+    says nothing about whether the drivers are correlated with *each other* —
+    if two are, a coefficient that looks like an independent effect may
+    actually be riding on a correlated peer instead. Deseasonalized by default
+    for the same reason as ``lagged_cross_correlation``: two signals that are
+    both just "high in winter" will look correlated with no real relationship
+    between them.
+
+    ``drivers`` defaults to every column except ``hospital_demand``.
+    """
+    if drivers is None:
+        drivers = [c for c in aligned.columns if c != "hospital_demand"]
+    cols = {
+        d: seasonal_residual(aligned[d]) if deseasonalize else aligned[d].astype(float)
+        for d in drivers
+    }
+    return pd.DataFrame(cols).corr(min_periods=20)
+
+
 @dataclass
 class CrossCorrResult:
     """Result of a lagged cross-correlation scan."""

@@ -9,6 +9,7 @@ import pytest
 from src.analysis.regression import (
     build_lagged_design_matrix,
     build_surge_labels,
+    driver_vif,
     fit_count_regression,
     fit_logistic_regression,
 )
@@ -72,6 +73,36 @@ def test_fit_count_regression_requires_enough_overlap():
     aligned = _planted_aligned(n=10)
     with pytest.raises(ValueError, match="Only .* overlapping weeks"):
         fit_count_regression(aligned, "hospital_demand", {"driver": 8})
+
+
+def test_driver_vif_flags_a_collinear_driver():
+    """A driver that's almost a copy of another should get a high VIF; an
+    independent third driver should stay low."""
+    rng = np.random.default_rng(3)
+    n = 60
+    weeks = pd.date_range("2024-01-07", periods=n, freq="W", tz="UTC")
+    base = rng.standard_normal(n)
+    aligned = pd.DataFrame({
+        "a": base,
+        "b": base + rng.normal(scale=0.01, size=n),
+        "c": rng.standard_normal(n),
+        "hospital_demand": rng.standard_normal(n),
+    }, index=weeks)
+
+    vif_df = driver_vif(aligned, deseasonalize=False)
+    vif = vif_df.set_index("driver")["vif"]
+    assert vif["a"] > 10
+    assert vif["b"] > 10
+    assert vif["c"] < 5
+
+
+def test_driver_vif_returns_empty_with_insufficient_overlap():
+    aligned = pd.DataFrame({
+        "a": [1.0, 2.0, 3.0],
+        "b": [2.0, 4.0, 6.0],
+        "hospital_demand": [1.0, 2.0, 3.0],
+    })
+    assert driver_vif(aligned, min_obs=20).empty
 
 
 def _planted_surge_aligned(n: int = 120, lag: int = 2, seed: int = 1) -> pd.DataFrame:

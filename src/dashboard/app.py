@@ -29,8 +29,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from src.analysis.correlate import align, lagged_cross_correlation, seasonal_residual
-from src.analysis.regression import fit_count_regression, fit_logistic_regression
+from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation, seasonal_residual
+from src.analysis.regression import driver_vif, fit_count_regression, fit_logistic_regression
 
 DATA_BRANCH_BASE = os.environ.get(
     "POPULATION_PULSE_DATA_URL",
@@ -422,6 +422,59 @@ def _render_correlation_and_regression(aligned: pd.DataFrame) -> None:
         )
 
 
+def _render_driver_correlation_matrix(aligned: pd.DataFrame) -> None:
+    drivers = [c for c in aligned.columns if c != "hospital_demand"]
+    if len(drivers) < 2:
+        return
+
+    with st.expander("Driver correlation matrix (confounding check)"):
+        st.caption(
+            "The chart above treats each driver independently against "
+            "respiratory ED demand — it says nothing about whether the "
+            "drivers are correlated with *each other*. If two are, a "
+            "coefficient that looks like an independent effect may actually "
+            "be riding on its correlated peer. Deseasonalized (same 13-week "
+            "residual as everywhere else) so two signals that are both just "
+            "\"high in winter\" don't look related with no real link between "
+            "them."
+        )
+
+        corr = driver_correlation_matrix(aligned, drivers)
+        corr_long = (
+            corr.reset_index()
+            .rename(columns={"index": "driver_1"})
+            .melt(id_vars="driver_1", var_name="driver_2", value_name="correlation")
+        )
+        heatmap = alt.Chart(corr_long).mark_rect().encode(
+            x=alt.X("driver_1:N", title=None, sort=drivers),
+            y=alt.Y("driver_2:N", title=None, sort=drivers),
+            color=alt.Color(
+                "correlation:Q", title="Correlation",
+                scale=alt.Scale(scheme="redblue", domain=[-1, 1]),
+            ),
+            tooltip=[
+                alt.Tooltip("driver_1:N", title="Driver"),
+                alt.Tooltip("driver_2:N", title="vs."),
+                alt.Tooltip("correlation:Q", title="Correlation", format="+.2f"),
+            ],
+        ).properties(height=max(220, 32 * len(drivers)))
+        st.altair_chart(heatmap, width="stretch")
+
+        vif_df = driver_vif(aligned, drivers)
+        if vif_df.empty:
+            st.caption("Not enough weeks where all drivers overlap to compute VIF reliably.")
+            return
+
+        vif_df = vif_df.assign(vif=vif_df["vif"].round(2))
+        st.dataframe(vif_df, width="stretch", hide_index=True)
+        st.caption(
+            f"Variance inflation factor on {vif_df['n_obs'].iloc[0]} weeks where "
+            f"all {len(drivers)} drivers overlap — VIF above ~5 means that "
+            "driver is largely explained by the others, so its own "
+            "coefficient in a joint model is unreliable."
+        )
+
+
 def main() -> None:
     st.title("population-pulse")
     st.caption(
@@ -516,6 +569,7 @@ def main() -> None:
 
     with tab_corr:
         _render_correlation_and_regression(aligned)
+        _render_driver_correlation_matrix(aligned)
 
 
 if __name__ == "__main__":

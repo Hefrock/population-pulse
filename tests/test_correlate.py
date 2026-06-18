@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.analysis.correlate import align, lagged_cross_correlation
+from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation
 
 
 def _weekly_series(n: int, tz: str = "UTC") -> pd.DataFrame:
@@ -85,3 +85,34 @@ def test_lagged_cross_correlation_deseasonalize():
     result = lagged_cross_correlation(s, s, max_lag=4, deseasonalize=True)
     assert len(result.lags) == 5
     assert len(result.correlations) == 5
+
+
+def test_driver_correlation_matrix_detects_correlated_pair():
+    """Two drivers built from the same noise must show up strongly correlated,
+    while an independent third driver should not."""
+    rng = np.random.default_rng(7)
+    n = 60
+    t = pd.date_range("2024-01-07", periods=n, freq="W", tz="UTC")
+    base = rng.standard_normal(n)
+    aligned = pd.DataFrame({
+        "a": base,
+        "b": base + rng.normal(scale=0.01, size=n),
+        "c": rng.standard_normal(n),
+        "hospital_demand": rng.standard_normal(n),
+    }, index=t)
+
+    corr = driver_correlation_matrix(aligned, deseasonalize=False)
+    assert "hospital_demand" not in corr.columns
+    assert corr.loc["a", "b"] > 0.99
+    assert abs(corr.loc["a", "c"]) < 0.5
+
+
+def test_driver_correlation_matrix_diagonal_is_one():
+    t = pd.date_range("2024-01-07", periods=30, freq="W", tz="UTC")
+    aligned = pd.DataFrame({
+        "a": np.arange(30, dtype=float),
+        "b": np.arange(30, dtype=float) ** 2,
+    }, index=t)
+    corr = driver_correlation_matrix(aligned, deseasonalize=False)
+    assert corr.loc["a", "a"] == pytest.approx(1.0)
+    assert corr.loc["b", "b"] == pytest.approx(1.0)

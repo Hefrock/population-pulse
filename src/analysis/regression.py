@@ -40,6 +40,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from scipy.stats import rankdata
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 from src.analysis.correlate import seasonal_residual
 
@@ -241,3 +242,44 @@ def fit_logistic_regression(
         surge_labels=y,
         fitted_probabilities=fitted,
     )
+
+
+def driver_vif(
+    aligned: pd.DataFrame,
+    drivers: list[str] | None = None,
+    deseasonalize: bool = True,
+    min_obs: int = 20,
+) -> pd.DataFrame:
+    """Variance inflation factor for each driver, on weeks where all overlap.
+
+    Companion to ``correlate.driver_correlation_matrix`` for the same
+    confounding question, but stated in regression terms: VIF > 5 means a
+    driver is largely explained by a linear combination of the others, so its
+    own coefficient in a joint model (e.g. ``fit_count_regression`` given
+    multiple ``driver_lags`` keys) is unreliable even if its univariate
+    correlation against ``hospital_demand`` looked clean.
+
+    Returns an empty frame (rather than raising) if there are fewer than two
+    drivers or fewer than ``min_obs`` weeks where all of them overlap — VIF
+    on a handful of points is noise, not signal.
+    """
+    if drivers is None:
+        drivers = [c for c in aligned.columns if c != "hospital_demand"]
+    cols = {
+        d: seasonal_residual(aligned[d]) if deseasonalize else aligned[d].astype(float)
+        for d in drivers
+    }
+    design = pd.DataFrame(cols).dropna()
+    if len(drivers) < 2 or len(design) < min_obs:
+        return pd.DataFrame(columns=["driver", "vif", "n_obs"])
+
+    exog = sm.add_constant(design)
+    rows = [
+        {
+            "driver": d,
+            "vif": float(variance_inflation_factor(exog.to_numpy(), exog.columns.get_loc(d))),
+            "n_obs": len(design),
+        }
+        for d in drivers
+    ]
+    return pd.DataFrame(rows).sort_values("vif", ascending=False).reset_index(drop=True)
