@@ -192,6 +192,22 @@ def test_run_timeseries_key_columns_covers_every_self_archiving_signal():
     }
 
 
+def test_check_archiving_coverage_passes_for_known_signals():
+    from src.ingestion import run
+
+    run._check_archiving_coverage(set(run.TIMESERIES_KEY_COLUMNS) | run.NOT_ACCUMULATED)
+
+
+def test_check_archiving_coverage_raises_for_a_new_unwired_signal():
+    """Guards against the exact bug class found in this session: a new
+    fetcher gets added to run()'s ``signals`` dict but nobody updates
+    TIMESERIES_KEY_COLUMNS, so it's silently overwritten by the next run."""
+    from src.ingestion import run
+
+    with pytest.raises(RuntimeError, match="ambulance"):
+        run._check_archiving_coverage(set(run.TIMESERIES_KEY_COLUMNS) | {"ambulance"})
+
+
 # --- load_existing ---------------------------------------------------------------
 
 

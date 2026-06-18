@@ -66,6 +66,31 @@ TIMESERIES_KEY_COLUMNS = {
     "hospital_demand": ["timestamp", "metric"],
 }
 
+# The one legitimate exception: an *upcoming-events* snapshot with its own
+# events_archive.parquet mechanism (see events_archive.py) instead of
+# TIMESERIES_KEY_COLUMNS.
+NOT_ACCUMULATED = {"events"}
+
+
+def _check_archiving_coverage(signal_names) -> None:
+    """Fail loudly if a signal is wired into ``run()`` but not accumulated.
+
+    This is the exact bug class that silently erased years of wastewater and
+    hospital_demand history: a signal returning real historical data that
+    wasn't in ``TIMESERIES_KEY_COLUMNS``, so the daily cron's default
+    trailing-365-day window overwrote it down to one year on every run. A new
+    signal must be added to ``TIMESERIES_KEY_COLUMNS`` or ``NOT_ACCUMULATED``
+    before it can ship.
+    """
+    uncovered = set(signal_names) - set(TIMESERIES_KEY_COLUMNS) - NOT_ACCUMULATED
+    if uncovered:
+        raise RuntimeError(
+            f"{sorted(uncovered)} not in TIMESERIES_KEY_COLUMNS or NOT_ACCUMULATED -- "
+            "every run, including the daily cron's default trailing-365-day "
+            "window, would silently overwrite any accumulated history for "
+            "this signal. Add it to one of the two in src/ingestion/run.py."
+        )
+
 
 def _default_range() -> tuple[str, str]:
     """Default to the trailing 365 days."""
@@ -88,6 +113,7 @@ def run(city: str, start: str, end: str) -> None:
         "wastewater": provider.fetch_wastewater,
         "hospital_demand": provider.fetch_hospital_demand,
     }
+    _check_archiving_coverage(signals)
 
     print(f"Ingesting {provider.name} from {start} to {end}")
     for name, fetch in signals.items():
