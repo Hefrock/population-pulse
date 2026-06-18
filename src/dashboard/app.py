@@ -46,8 +46,24 @@ COLOR_SCHEME = "tableau10"
 st.set_page_config(page_title="population-pulse", layout="wide")
 
 
+def _local_data_fingerprint(city: str) -> tuple[float, ...]:
+    """Mtime per local signal file, passed into _load_signals as a cache key.
+
+    Without this, st.cache_data(ttl=3600) only keys on `city`, so a pipeline
+    run that rewrites data/<city>/*.parquet while the dashboard process is
+    still alive keeps serving the old (possibly date-range-narrower) cached
+    frames for up to an hour — no widening of the sidebar date range can
+    reveal data that was never reloaded into memory.
+    """
+    data_dir = Path("data") / city
+    return tuple(
+        (data_dir / f"{s}.parquet").stat().st_mtime if (data_dir / f"{s}.parquet").exists() else -1.0
+        for s in SIGNALS
+    )
+
+
 @st.cache_data(ttl=3600)
-def _load_signals(city: str) -> dict[str, pd.DataFrame]:
+def _load_signals(city: str, fingerprint: tuple[float, ...]) -> dict[str, pd.DataFrame]:
     """Load signals: local files → data branch → sample data."""
     data_dir = Path("data") / city
 
@@ -429,7 +445,7 @@ def main() -> None:
 
     with st.spinner("Loading data…"):
         try:
-            raw_signals = _load_signals(city)
+            raw_signals = _load_signals(city, _local_data_fingerprint(city))
         except Exception as exc:
             st.error(f"Could not load data: {exc}")
             st.info(
