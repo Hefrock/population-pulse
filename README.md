@@ -171,11 +171,16 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 
 **tl;dr:** Wastewater Influenza A and RSV levels (same week, lag 0) are real,
 modest predictors of a respiratory ED "surge" week (AUC-ROC 0.67–0.68, both
-p<0.01) — the project's strongest result so far. The other three drivers
-(events/academic calendar, transit, weather) show nothing that survives
-correction for overdispersion in the count models, mostly because their
-real-data windows are still short (47–81 weeks vs. wastewater's ~180). Details
-and caveats below.
+p<0.01) — the project's strongest result so far, though see the note below on
+re-running this since the transit/weather backfill (the wastewater lag-0
+finding did not reproduce cleanly — flagged, not yet resolved). Now that
+transit, weather, and the new bikeshare signal have ~7 years of real history
+(up from 47–81 weeks), transit and weather **both reach significance** in the
+Negative-Binomial count model (p=0.011, p=0.024) — reversing the earlier
+"none of the three survive correction" conclusion — and bikeshare's surge
+logistic regression (AUC=0.66) is the strongest of any driver tested so far.
+Academic calendar is unchanged (its real history wasn't part of this
+backfill). Details and caveats below.
 
 This is the honest result of running the pipeline end-to-end on ~3.5 years of
 real data (WastewaterSCAN wastewater + MA DPH respiratory ED visits, Dec 2022 –
@@ -209,41 +214,56 @@ count data** — always compare against `family="negative_binomial"`.
 
 ### The other three sub-hypotheses, on real data
 
-The wastewater result above is the strongest because it has the longest
-real-data history (~3.5 years). The other three drivers are now also tested
-against real data — at lag 0–5 weeks, picked by `lagged_cross_correlation`,
-then fit with `fit_logistic_regression` (surge AUC-ROC) and
+A one-time wide `workflow_dispatch` backfill (2018-07-01 → present) has now
+run for transit, weather, and the new bikeshare signal — see "Known
+limitations" for how — so these three go from 47–81 weeks of real history to
+~7 years, finally longer than wastewater's ~3.5. Each is tested the same way:
+best lag picked by `lagged_cross_correlation` (max lag 8, confirmed against a
+wider 16-week search — none of the "best" lags below are search-boundary
+artifacts), then fit with `fit_logistic_regression` (surge AUC-ROC) and
 `fit_count_regression` (Poisson vs. Negative-Binomial):
 
 | Driver | Real-data window | Weeks | Best lag | Surge AUC-ROC (p) | Poisson AIC | NB AIC | NB p-value |
 |---|---|---|---|---|---|---|---|
 | Academic calendar (large gatherings) | Aug 2024 – May 2026 | 81 | 0 | 0.64 (p=0.048) | 60,771 | 1,632 | 0.65 |
-| Transit (commute) | Jun 2025 – May 2026 | 47 | 0 | 0.59 (p=0.195) | 30,744 | 934 | 0.54 |
-| Weather (temperature) | Jun 2025 – May 2026 | 48 | 2 | 0.59 (p=0.391) | 18,376 | 952 | 0.12 |
+| Bikeshare (active/leisure mobility) | Jun 2019 – May 2026 | 358 | 0 | 0.66 (p<0.0001) | 348,257 | 7,130 | 0.07 |
+| Transit (commute) | Jun 2019 – May 2026 | 358 | 8 | 0.57 (p=0.021) | 346,385 | 7,187 | 0.011 |
+| Weather (temperature) | Jun 2019 – May 2026 | 361 | 5 | 0.62 (p=0.001) | 340,487 | 7,187 | 0.024 |
 
-**Same Poisson-vs-NB gap, every time:** Poisson AIC is 19–37x worse than
-Negative-Binomial across all three drivers — the overdispersion lesson from
-the wastewater section isn't a one-off, it's structural to this dataset.
-Once corrected, **none of the three reach significance** in the NB count
-model. The academic-calendar surge logistic regression is borderline
-(p=0.048, AUC=0.64) but with only 81 weeks and one borderline p-value among
-several tests, this is not strong enough to call a finding — it's a thread
-worth re-checking once more terms of academic-calendar history accumulate.
-Weather's NB p-value (0.12) is the next-closest, consistent with a real but
-sub-significant cold-weather effect at a 2-week lag.
+**The backfill changed the answer, not just the sample size:** with ~7 years
+of real data instead of <1, transit and weather **both reach significance**
+in the Negative-Binomial count model (p=0.011 and p=0.024) — reversing the
+earlier "none of the three survive correction" conclusion from when this
+table only had 47–48 weeks per driver. Bikeshare's surge-logistic AUC (0.66)
+is the strongest of any driver tested so far, including wastewater, though
+its NB p-value (0.07) falls just short of conventional significance.
+Academic calendar is unchanged from before (its real history wasn't part of
+this backfill) and remains the same single borderline result it was.
 
-**Why these windows are so much shorter than wastewater's:** until now, transit
-and weather had no historical-archive fallback exercised in this environment —
-their real data was whatever the daily GitHub Actions run had accumulated on
-the `data` branch, capped at a rolling ~1 year because each run *overwrote*
-`transit.parquet`/`weather.parquet` with its fetch window. `run.py` now merges
-each fetch into the existing file in place instead (see
-`src/ingestion/timeseries_archive.py`), so the cap is gone — both the daily
-rolling fetch and a one-time wide `workflow_dispatch` backfill (MBTA gated
-entries go back to 2014, Open-Meteo's archive decades further) accumulate
-permanently, the same way `events_archive.parquet` does for events. A real
-backfill still needs to run from an environment with unrestricted network
-access (see "Known limitations").
+**Caveat on transit's lag:** lag 8 (two months) is a long delay for a
+"commute crowding now, ED visits later" causal story to be mechanistically
+plausible — incubation and care-seeking don't usually take two months. A more
+likely explanation is a confounded second-order seasonal pattern (both
+series move with the academic year/winter approach on a multi-week offset)
+rather than a real leading-indicator relationship. Worth treating as
+descriptive, not as evidence for the commute hypothesis specifically, until a
+matched-baseline study (Phase 2) can separate the two.
+
+**An open problem found while re-running this analysis:** redoing the
+wastewater lag search above (same `lagged_cross_correlation` call, same
+real data) no longer picks lag 0 as the best lag for Influenza A or RSV —
+it now picks lag 4 (corr -0.45, vs. +0.44 at lag 0) and lag 7 respectively,
+both close in magnitude but opposite in sign to the lag-0 result this
+section's headline number is based on. This wasn't caused by the
+transit/weather/bikeshare backfill (wastewater wasn't part of it) and isn't
+a tail/reporting-lag artifact (it persists after trimming the most recent 12
+weeks) — it appears the lag-0-vs-lag-4 pick for Influenza A is a genuinely
+close call that flipped between whenever the table above was generated and
+now, most likely because the underlying real-time WastewaterSCAN/MA DPH
+values have been revised since. **Not yet resolved** — the wastewater numbers
+above are left as previously reported pending a decision on how to handle
+this instability (e.g. preferring lag 0 by hypothesis rather than by raw
+`argmax(abs(corr))`, or reporting a sensitivity range instead of one lag).
 
 **Events couldn't be tested at all, but the gap is now closing:**
 Ticketmaster and Boston.gov civic events are *upcoming-events* APIs (rolling
@@ -319,23 +339,22 @@ In the spirit of an honest status report, not just a feature list:
   upcoming events (616 Ticketmaster + 229 Boston.gov civic events). Bluebikes'
   S3 trip-data archive *is* reachable from this sandbox, though (confirmed:
   ~185 days of real ride counts fetched directly in development).
-- **Transit, weather, and bikeshare history is no longer capped at ~1 year,
-  but hasn't been backfilled yet.** `run.py` used to overwrite
-  `transit.parquet` / `weather.parquet` with each day's fetch window; it now
-  merges each fetch into the existing file in place
+- **Transit, weather, and bikeshare history is no longer capped at ~1
+  year, and a one-time backfill has now run for all three.** `run.py` used
+  to overwrite `transit.parquet` / `weather.parquet` with each day's fetch
+  window; it now merges each fetch into the existing file in place
   (`src/ingestion/timeseries_archive.py`), so the daily rolling fetch
-  accumulates permanently going forward. None of MBTA's historical ridership
-  (back to 2014), Open-Meteo's archive (decades further), or Bluebikes' trip
-  history has actually been backfilled yet, though — see "The other three
-  sub-hypotheses, on real data" above — a one-time wide `workflow_dispatch`
-  run from an environment with unrestricted network access would do it.
-  **Bikeshare is the best-positioned of the three for this:** Bluebikes'
-  `*-bluebikes-tripdata.zip` files go back to mid-2018 (confirmed: 201806
-  exists, 201501 doesn't — that's `*-hubway-tripdata.zip`, a different naming
-  this fetcher doesn't read), which fully covers `hospital_demand`'s real
-  history (MA DPH data starts 2019-06-30). A `workflow_dispatch --start
-  2018-07-01` run would give bikeshare real overlap with the *entire*
-  hospital-demand series from day one — unlike `events`, which has none yet.
+  accumulates permanently going forward. A `workflow_dispatch --start
+  2018-07-01` run backfilled real history for all three: bikeshare and
+  transit to 2018-07-01 (through ~Apr–May 2026, limited by each source's
+  publication lag), weather to 2018-07-01 through the present (Open-Meteo has
+  no publication lag). That's why "The other three sub-hypotheses, on real
+  data" above now reports ~358–361 weeks for these three instead of 47–81.
+  MBTA's gated-entry data actually goes back further (to 2014) and
+  Open-Meteo's archive decades further still — neither has been pulled back
+  that far, since 2018-07-01 already fully covers `hospital_demand`'s real
+  history (MA DPH data starts 2019-06-30), so there's little marginal value
+  in going earlier than the dependent variable itself.
 - **Events have zero overlap with historical hospital demand (today) — but
   `events_archive.parquet` is now accumulating one.** Ticketmaster and
   Boston.gov civic events are upcoming-events APIs (rolling ~365 days
