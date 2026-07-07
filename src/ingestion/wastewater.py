@@ -47,6 +47,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from src.ingestion.sample_window import shift_sample_to_window
+
 REQUEST_TIMEOUT = 30
 SAMPLE_PATH = Path("data/samples/wastewater_sample.csv")
 
@@ -344,6 +346,9 @@ def _load_sample(
     df = df[df["pathogen"].isin(pathogens)].copy()
     if "source" not in df.columns:
         df["source"] = "sample"
+    # Slide an aged sample onto the requested window so the fallback stays
+    # non-empty (only the sample tier does this — real parsers below clip).
+    df = shift_sample_to_window(df, start, end)
     return _localize_and_window(df, start, end, timezone)
 
 

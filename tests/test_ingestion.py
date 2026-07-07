@@ -570,6 +570,21 @@ def test_wastewater_sample_filters_to_requested_pathogens():
     assert set(df["pathogen"].unique()) == {"RSV"}
 
 
+def test_wastewater_sample_covers_window_past_its_own_dates():
+    """Same aged-sample guard as weather: a window years past the frozen sample
+    must still return data (shifted by whole years), not clip to zero rows."""
+    future_start = (datetime.date.today() + datetime.timedelta(days=365 * 3)).isoformat()
+    future_end = (datetime.date.today() + datetime.timedelta(days=365 * 3 + 60)).isoformat()
+    df = wastewater._load_sample(
+        ["SARS-CoV-2", "Influenza A", "RSV"],
+        start=future_start, end=future_end, timezone="America/New_York",
+    )
+    assert not df.empty
+    assert set(df["pathogen"].unique()) == {"SARS-CoV-2", "Influenza A", "RSV"}
+    assert df["timestamp"].min() >= pd.Timestamp(future_start, tz="America/New_York")
+    assert df["timestamp"].max() <= pd.Timestamp(future_end, tz="America/New_York")
+
+
 def test_parse_cdc_nwss_long_form():
     records = [
         {"week_end_date": "2025-01-04", "state": "Massachusetts",

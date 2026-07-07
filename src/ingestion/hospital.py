@@ -17,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.ingestion import cdc_fluview
+from src.ingestion.sample_window import shift_sample_to_window
 
 CACHED_PATH = Path("data/ma_dph_respiratory.csv")
 SAMPLE_PATH = Path("data/samples/hospital_demand_sample.csv")
@@ -55,13 +56,18 @@ def fetch_ma_dph_respiratory(
             "No hospital-demand data found. Run `python -m src.ingestion.make_samples` "
             "to regenerate the sample, or download the MA DPH file."
         )
-    return _load_csv(SAMPLE_PATH, metrics, start, end, timezone)
+    # shift_to_window only for the synthetic sample: an aged sample must still
+    # cover a today-relative window. Real MA DPH data (Tier 1) is never shifted.
+    return _load_csv(SAMPLE_PATH, metrics, start, end, timezone, shift_to_window=True)
 
 
 def _load_csv(
-    path: Path, metrics: list[str], start: str, end: str, timezone: str
+    path: Path, metrics: list[str], start: str, end: str, timezone: str,
+    shift_to_window: bool = False,
 ) -> pd.DataFrame:
     df = pd.read_csv(path, parse_dates=["timestamp"])
+    if shift_to_window:
+        df = shift_sample_to_window(df, start, end)
     if df["timestamp"].dt.tz is None:
         df["timestamp"] = df["timestamp"].dt.tz_localize(timezone)
     mask = (
