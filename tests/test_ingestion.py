@@ -109,6 +109,29 @@ def test_weather_http_error_falls_back_to_sample(monkeypatch):
     assert not df.empty
 
 
+def test_weather_sample_covers_window_past_its_own_dates():
+    """The bundled weather sample spans a fixed ~1-year window frozen at
+    generation time, but run.py requests a window relative to *today*. Once the
+    committed sample ages out of that window the fallback must still return
+    data (shifting the sample by whole years), not silently clip to zero rows —
+    the failure mode that broke daily ingestion when the sample aged past the
+    trailing-365-day window."""
+    from src.ingestion import weather
+
+    # A window years past any committed sample — the shift must still cover it.
+    future_start = (datetime.date.today() + datetime.timedelta(days=365 * 3)).isoformat()
+    future_end = (datetime.date.today() + datetime.timedelta(days=365 * 3 + 7)).isoformat()
+    df = weather._load_sample(
+        ["temperature_2m", "apparent_temperature", "precipitation"],
+        future_start, future_end, "America/New_York",
+    )
+    assert not df.empty
+    assert df["timestamp"].min() >= pd.Timestamp(future_start, tz="America/New_York")
+    assert df["timestamp"].max() <= pd.Timestamp(future_end, tz="America/New_York")
+    # planted seasonality survives the whole-year shift (not a flat/degenerate series)
+    assert df["temperature_2m"].nunique() > 1
+
+
 def test_weather_dst_localize_ambiguous():
     """The ambiguous 1 AM fall-back hour must not crash (ambiguous=False → standard time)."""
     naive = pd.to_datetime([
