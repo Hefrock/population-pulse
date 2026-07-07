@@ -325,6 +325,17 @@ event-level backtesting is still not possible *today* — but the archive is
 the prerequisite Phase 2's matched-baseline event studies need, and the
 sooner it starts accumulating the sooner that becomes possible.
 
+**One more caveat that applies to every result above: each is univariate.**
+Every number in this section tests one driver against respiratory ED demand
+in isolation — none of them control for the fact that the drivers are also
+correlated with *each other* (transit, bikeshare, and academic calendar
+especially). A result that looks like an independent effect on its own can
+weaken once a correlated driver is also accounted for. Rather than bake a
+specific number here that would go stale as more data accumulates, the
+dashboard's "Driver correlation matrix" view (Correlation & Regression tab)
+computes this live against whatever data is currently loaded — check it
+before treating any single-driver result above as independent.
+
 ---
 
 ## Known limitations
