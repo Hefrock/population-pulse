@@ -21,6 +21,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from src.ingestion.sample_window import shift_sample_to_window
+
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 REQUEST_TIMEOUT = 30
 SAMPLE_PATH = Path("data/samples/weather_sample.csv")
@@ -77,33 +79,18 @@ def fetch_open_meteo(
 def _load_sample(variables: list[str], start: str, end: str, timezone: str) -> pd.DataFrame:
     """Bundled hourly sample with planted seasonal extremes, clipped to [start, end].
 
-    The committed sample spans a fixed ~1-year window anchored to whenever
-    ``make_samples`` last ran, but ``run.py`` (and the tests) request a window
-    relative to *today*. Once the sample ages far enough that [start, end] no
-    longer overlaps it, a naive clip returns zero rows — silently dropping the
-    signal on any run that falls back here, which defeats the point of the
-    sample tier. To stay fail-soft, shift the sample by whole years until it
-    covers the requested window before clipping. The planted signal is
-    day-of-year seasonal, so a whole-year shift preserves it; shifting the
-    naive timestamps *before* localizing keeps the DST guards (below) in charge
-    of the spring-forward/fall-back hours rather than tripping over them.
+    An aged sample can fall entirely outside a today-relative [start, end] and
+    clip to zero rows; ``shift_sample_to_window`` slides it by whole years to
+    cover the window first, keeping the fallback fail-soft. Shifting the naive
+    timestamps *before* localizing keeps the DST guards (below) in charge of the
+    spring-forward/fall-back hours rather than tripping over them.
     """
     if not SAMPLE_PATH.exists():
         print(f"[weather] No sample at {SAMPLE_PATH}; continuing with no signal.")
         return pd.DataFrame(columns=["timestamp", *variables])
 
     df = pd.read_csv(SAMPLE_PATH, parse_dates=["timestamp"])
-
-    # Naive year-shift so an aged sample still covers a today-relative window:
-    # slide it by whole years until it overlaps [start, end]. Bounded by the
-    # gap between the sample and the window, so it terminates.
-    start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
-    if not df.empty:
-        year = pd.DateOffset(years=1)
-        while df["timestamp"].max() < start_ts:  # sample ends before the window
-            df["timestamp"] = df["timestamp"] + year
-        while df["timestamp"].min() > end_ts:    # sample starts after the window
-            df["timestamp"] = df["timestamp"] - year
+    df = shift_sample_to_window(df, start, end)
 
     df["timestamp"] = df["timestamp"].dt.tz_localize(
         timezone, nonexistent="shift_forward", ambiguous=False

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+
 import pandas as pd
 
 from src.ingestion import hospital
@@ -72,3 +74,36 @@ def test_fetch_falls_back_to_sample_when_nothing_else_available(monkeypatch, tmp
 
     assert (df["metric"] == "ed_visits_respiratory").all()
     assert not df.empty
+
+
+def test_sample_fallback_covers_window_past_its_own_dates(monkeypatch, tmp_path):
+    """The synthetic sample tier must stay non-empty for a today-relative window
+    that has aged past the frozen sample (shifted by whole years), the same
+    guard weather and wastewater have."""
+    monkeypatch.setattr(hospital, "CACHED_PATH", tmp_path / "missing.csv")
+    monkeypatch.setattr(hospital.cdc_fluview, "fetch_ili_data", lambda **kw: hospital.cdc_fluview._empty_frame())
+
+    future_start = (datetime.date.today() + datetime.timedelta(days=365 * 3)).isoformat()
+    future_end = (datetime.date.today() + datetime.timedelta(days=365 * 3 + 120)).isoformat()
+    df = hospital.fetch_ma_dph_respiratory(
+        metrics=["ed_visits_respiratory"], start=future_start, end=future_end, timezone="America/New_York",
+    )
+
+    assert not df.empty
+    assert (df["metric"] == "ed_visits_respiratory").all()
+    assert df["timestamp"].min() >= pd.Timestamp(future_start, tz="America/New_York")
+
+
+def test_load_csv_does_not_shift_real_data(tmp_path):
+    """The shift is sample-tier only: real MA DPH data (shift_to_window=False,
+    the default) must still be clipped to the window, never slid into range."""
+    csv_path = tmp_path / "ma_dph.csv"
+    _write_csv(csv_path, [
+        ("2025-01-05", "ed_visits_respiratory", 100),
+        ("2025-06-01", "ed_visits_respiratory", 200),  # outside requested range
+    ])
+    df = hospital._load_csv(
+        csv_path, ["ed_visits_respiratory"],
+        start="2025-01-01", end="2025-02-01", timezone="America/New_York",
+    )
+    assert df["value"].tolist() == [100]
