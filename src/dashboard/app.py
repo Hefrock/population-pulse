@@ -31,6 +31,7 @@ import streamlit as st
 
 from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation, seasonal_residual
 from src.analysis.regression import driver_vif, fit_count_regression, fit_logistic_regression
+from src.ingestion.hospital import PROVISIONAL_WEEKS, provisional_cutoff
 
 DATA_BRANCH_BASE = os.environ.get(
     "POPULATION_PULSE_DATA_URL",
@@ -173,12 +174,14 @@ def _render_overview(
     aligned: pd.DataFrame,
     raw_signals: dict[str, pd.DataFrame],
     signals: dict[str, pd.DataFrame],
+    hd_cutoff: pd.Timestamp | None = None,
 ) -> None:
     hd = aligned["hospital_demand"].dropna() if "hospital_demand" in aligned.columns else pd.Series(dtype=float)
 
     if len(hd) >= 4:
         residual = seasonal_residual(hd)
         latest_value = hd.iloc[-1]
+        latest_ts = hd.index[-1]
         latest_residual = residual.iloc[-1]
         hi = residual.quantile(0.75)
         lo = residual.quantile(0.25)
@@ -187,6 +190,14 @@ def _render_overview(
         c1.metric("Respiratory ED demand (latest week)", f"{latest_value:,.0f}")
         c2.metric("Vs. seasonal baseline", f"{latest_residual:+,.1f}")
         c3.metric("Weeks of data in range", f"{len(hd)}")
+
+        if hd_cutoff is not None and latest_ts > hd_cutoff:
+            st.caption(
+                f"⚠️ The latest week is provisional — MA DPH revises the most "
+                f"recent ~{PROVISIONAL_WEEKS} weeks upward as more hospitals finish "
+                "reporting; this number (and the baseline comparison above) can "
+                "still increase by double digits before it's final."
+            )
 
         if latest_residual > hi:
             st.warning(
@@ -233,7 +244,9 @@ def _render_overview(
         st.caption("Earliest/latest timestamp available per signal, regardless of the date range selected above.")
 
 
-def _render_timeline(aligned: pd.DataFrame, events_df: pd.DataFrame) -> None:
+def _render_timeline(
+    aligned: pd.DataFrame, events_df: pd.DataFrame, hd_cutoff: pd.Timestamp | None = None
+) -> None:
     st.caption(
         "Each signal is shown as a z-score (mean 0, std 1 over this date range) "
         "so series with very different units and scales — ridership, °C, "
@@ -291,7 +304,22 @@ def _render_timeline(aligned: pd.DataFrame, events_df: pd.DataFrame) -> None:
             ],
         )
         chart = line + rules
-        st.caption("Dashed vertical lines mark known large events (hover for details).")
+        st.caption("Gray dashed vertical lines mark known large events (hover for details).")
+
+    if (
+        hd_cutoff is not None
+        and "hospital_demand" in selected
+        and aligned.index.min() <= hd_cutoff <= aligned.index.max()
+    ):
+        provisional_rule = alt.Chart(pd.DataFrame({"timestamp": [hd_cutoff]})).mark_rule(
+            color="orange", strokeDash=[2, 2], opacity=0.8,
+        ).encode(x="timestamp:T")
+        chart = chart + provisional_rule
+        st.caption(
+            f"Orange dashed line: respiratory ED demand after this point is "
+            f"provisional (MA DPH's most recent ~{PROVISIONAL_WEEKS} weeks, "
+            "subject to upward revision as more hospitals finish reporting)."
+        )
 
     st.altair_chart(chart.properties(height=420).interactive(), width="stretch")
 
@@ -305,11 +333,32 @@ def _render_timeline(aligned: pd.DataFrame, events_df: pd.DataFrame) -> None:
         )
 
 
-def _render_correlation_and_regression(aligned: pd.DataFrame) -> None:
+def _render_correlation_and_regression(
+    aligned: pd.DataFrame, hd_cutoff: pd.Timestamp | None = None
+) -> None:
     drivers = [c for c in aligned.columns if c != "hospital_demand"]
     if "hospital_demand" not in aligned.columns or not drivers:
         st.info("Need both a driver signal and respiratory ED demand (`hospital_demand`) to correlate.")
         return
+
+    # Exclude weeks where hospital_demand is still provisional (see hospital.py):
+    # masking to NaN here reuses the existing .dropna() paths in correlate.py and
+    # regression.py rather than needing to change either module. aligned's index
+    # spans every signal, not just hospital_demand (e.g. weather runs more current),
+    # so count only rows where this mask actually zeroes out a real value —
+    # otherwise weeks past hospital_demand's own last date (already NaN for
+    # unrelated reasons) would inflate the count below.
+    if hd_cutoff is not None:
+        provisional_mask = (aligned.index > hd_cutoff) & aligned["hospital_demand"].notna()
+        n_excluded = int(provisional_mask.sum())
+        if n_excluded:
+            aligned = aligned.copy()
+            aligned.loc[provisional_mask, "hospital_demand"] = float("nan")
+            st.caption(
+                f"Excluding the {n_excluded} most recent week(s) of respiratory ED "
+                "demand from correlation and regression below — still provisional "
+                "and subject to upward revision (see the Timeline tab)."
+            )
 
     col1, col2 = st.columns(2)
     with col1:
@@ -557,18 +606,27 @@ def main() -> None:
         st.warning("No numeric signals to display for this date range.")
         return
 
+    # Computed from raw_signals (unfiltered) rather than aligned/signals (date-range
+    # filtered) so narrowing the sidebar range to exclude the provisional tail
+    # correctly suppresses these warnings instead of flagging whatever week the
+    # filtered view happens to end on.
+    raw_hd = raw_signals.get("hospital_demand", pd.DataFrame())
+    hd_cutoff = None
+    if not raw_hd.empty and "timestamp" in raw_hd.columns:
+        hd_cutoff = provisional_cutoff(pd.to_datetime(raw_hd["timestamp"], utc=True).max())
+
     tab_overview, tab_timeline, tab_corr = st.tabs(
         ["Overview", "Timeline", "Correlation & Regression"]
     )
 
     with tab_overview:
-        _render_overview(aligned, raw_signals, signals)
+        _render_overview(aligned, raw_signals, signals, hd_cutoff)
 
     with tab_timeline:
-        _render_timeline(aligned, signals.get("events", pd.DataFrame()))
+        _render_timeline(aligned, signals.get("events", pd.DataFrame()), hd_cutoff)
 
     with tab_corr:
-        _render_correlation_and_regression(aligned)
+        _render_correlation_and_regression(aligned, hd_cutoff)
         _render_driver_correlation_matrix(aligned)
 
 

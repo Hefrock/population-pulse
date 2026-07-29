@@ -107,3 +107,11 @@ def test_load_csv_does_not_shift_real_data(tmp_path):
         start="2025-01-01", end="2025-02-01", timezone="America/New_York",
     )
     assert df["value"].tolist() == [100]
+
+
+def test_provisional_cutoff_is_n_weeks_before_latest():
+    latest = pd.Timestamp("2026-07-12", tz="America/New_York")
+    cutoff = hospital.provisional_cutoff(latest)
+    assert cutoff == latest - pd.Timedelta(weeks=hospital.PROVISIONAL_WEEKS)
+    # the latest week itself must always fall after the cutoff (i.e. be provisional)
+    assert latest > cutoff
