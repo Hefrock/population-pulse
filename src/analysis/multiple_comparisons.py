@@ -25,6 +25,8 @@ import numpy as np
 import pandas as pd
 from statsmodels.stats.multitest import multipletests
 
+from src.analysis.correlate import CrossCorrResult
+
 
 @dataclass
 class CorrectionResult:
@@ -84,3 +86,46 @@ def apply_correction(
         n_significant_raw=int((raw < alpha).sum()),
         n_significant_corrected=int(reject.sum()),
     )
+
+
+def summarize_scan(
+    results: dict[str, CrossCorrResult],
+    alpha: float = 0.05,
+    method: str = "fdr_bh",
+) -> tuple[pd.DataFrame, CorrectionResult]:
+    """Correct a whole ``correlate.scan_drivers()`` output together.
+
+    Unlike correcting one driver's own lags in isolation, this treats *every*
+    (driver, lag) p-value tested across the whole scan as one family -- the
+    "the one driver that survived, or the one that survived the most looks
+    across everything ever tested?" question at full scope, not just within
+    one driver's own 9-lag sweep.
+
+    Returns a one-row-per-driver summary (that driver's own best lag, with
+    the corrected p-value from the *full* scan-wide correction) sorted by
+    corrected p-value, plus the underlying ``CorrectionResult`` covering
+    every individual (driver, lag) pair for anyone who wants that detail.
+    """
+    flat = {
+        f"{driver}@{lag}": p
+        for driver, result in results.items()
+        for lag, p in zip(result.lags, result.pvalues)
+    }
+    correction = apply_correction(flat, alpha=alpha, method=method)
+    corrected_by_label = dict(zip(correction.labels, correction.corrected_pvalues))
+    significant_by_label = dict(zip(correction.labels, correction.significant))
+
+    rows = []
+    for driver, result in results.items():
+        label = f"{driver}@{result.best_lag}"
+        rows.append({
+            "driver": driver,
+            "best_lag": result.best_lag,
+            "correlation": result.best_corr,
+            "raw_pvalue": result.best_pvalue,
+            "corrected_pvalue": corrected_by_label[label],
+            "significant": significant_by_label[label],
+            "ambiguous": result.ambiguous,
+        })
+    summary_df = pd.DataFrame(rows).sort_values("corrected_pvalue").reset_index(drop=True)
+    return summary_df, correction

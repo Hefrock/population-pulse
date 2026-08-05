@@ -29,8 +29,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation, seasonal_residual
-from src.analysis.multiple_comparisons import apply_correction
+from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation, scan_drivers, seasonal_residual
+from src.analysis.multiple_comparisons import apply_correction, summarize_scan
 from src.analysis.regression import driver_vif, fit_count_regression, fit_logistic_regression
 from src.ingestion.hospital import PROVISIONAL_WEEKS, provisional_cutoff
 
@@ -573,6 +573,45 @@ def _render_driver_correlation_matrix(aligned: pd.DataFrame) -> None:
         )
 
 
+def _render_wide_correction_summary(aligned: pd.DataFrame) -> None:
+    drivers = [c for c in aligned.columns if c != "hospital_demand"]
+    if "hospital_demand" not in aligned.columns or not drivers:
+        return
+
+    with st.expander("Every driver, corrected together (full-scan significance check)"):
+        st.caption(
+            "The lag chart above corrects one driver's own 9 tested lags "
+            "against each other. This corrects *every* driver's *every* "
+            "tested lag together — the full family of everything scanned, "
+            "not just one driver's own sweep. This is the honest version of "
+            "\"is this the one driver that survived, or the one that "
+            "happened to survive the most looks?\" Deseasonalized, max lag 8 "
+            "weeks (fixed, independent of the controls above)."
+        )
+
+        results = scan_drivers(aligned, "hospital_demand", drivers, max_lag=8, deseasonalize=True)
+        skipped = [d for d in drivers if d not in results]
+        if not results:
+            st.info("Not enough overlapping data for any driver to run this scan.")
+            return
+
+        summary_df, correction = summarize_scan(results, alpha=0.05)
+        display_df = summary_df.assign(
+            correlation=summary_df["correlation"].round(3),
+            raw_pvalue=summary_df["raw_pvalue"].round(4),
+            corrected_pvalue=summary_df["corrected_pvalue"].round(4),
+        )
+        st.dataframe(display_df, width="stretch", hide_index=True)
+        st.caption(
+            f"{correction.n_significant_corrected} of {correction.n_tests} "
+            f"driver-lag tests survive Benjamini-Hochberg correction across "
+            f"the full scan (vs. {correction.n_significant_raw} that looked "
+            f"significant before it), across {len(results)} driver(s)."
+        )
+        if skipped:
+            st.caption(f"Skipped (not enough overlapping data): {', '.join(skipped)}.")
+
+
 def main() -> None:
     st.title("population-pulse")
     st.caption(
@@ -677,6 +716,7 @@ def main() -> None:
     with tab_corr:
         _render_correlation_and_regression(aligned, hd_cutoff)
         _render_driver_correlation_matrix(aligned)
+        _render_wide_correction_summary(aligned)
 
 
 if __name__ == "__main__":

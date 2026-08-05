@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from src.analysis import correlate
-from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation
+from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation, scan_drivers
 
 
 def _weekly_series(n: int, tz: str = "UTC") -> pd.DataFrame:
@@ -207,3 +207,49 @@ def test_driver_correlation_matrix_diagonal_is_one():
     corr = driver_correlation_matrix(aligned, deseasonalize=False)
     assert corr.loc["a", "a"] == pytest.approx(1.0)
     assert corr.loc["b", "b"] == pytest.approx(1.0)
+
+
+def test_scan_drivers_runs_every_driver_against_the_response():
+    rng = np.random.default_rng(11)
+    n = 60
+    t = pd.date_range("2024-01-07", periods=n, freq="W", tz="UTC")
+    aligned = pd.DataFrame({
+        "a": rng.standard_normal(n),
+        "b": rng.standard_normal(n),
+        "hospital_demand": rng.standard_normal(n),
+    }, index=t)
+    results = scan_drivers(aligned, "hospital_demand", max_lag=4, deseasonalize=False)
+    assert set(results.keys()) == {"a", "b"}
+    for result in results.values():
+        assert len(result.lags) == 5
+
+
+def test_scan_drivers_defaults_to_every_non_response_column():
+    rng = np.random.default_rng(12)
+    n = 60
+    t = pd.date_range("2024-01-07", periods=n, freq="W", tz="UTC")
+    aligned = pd.DataFrame({
+        "a": rng.standard_normal(n),
+        "b": rng.standard_normal(n),
+        "c": rng.standard_normal(n),
+        "hospital_demand": rng.standard_normal(n),
+    }, index=t)
+    results = scan_drivers(aligned, "hospital_demand", max_lag=3, deseasonalize=False)
+    assert set(results.keys()) == {"a", "b", "c"}
+
+
+def test_scan_drivers_skips_drivers_with_too_little_data():
+    """A driver with too few overlapping points to test (ValueError from
+    lagged_cross_correlation) is silently omitted, not a scan failure."""
+    rng = np.random.default_rng(13)
+    n = 60
+    t = pd.date_range("2024-01-07", periods=n, freq="W", tz="UTC")
+    short_t = t[:3]
+    aligned = pd.DataFrame({
+        "good": pd.Series(rng.standard_normal(n), index=t),
+        "too_short": pd.Series(rng.standard_normal(3), index=short_t),
+        "hospital_demand": pd.Series(rng.standard_normal(n), index=t),
+    })
+    results = scan_drivers(aligned, "hospital_demand", max_lag=4, deseasonalize=False)
+    assert "good" in results
+    assert "too_short" not in results
