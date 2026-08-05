@@ -184,6 +184,7 @@ def test_run_timeseries_key_columns_covers_every_self_archiving_signal():
 
     assert run.TIMESERIES_KEY_COLUMNS == {
         "transit": ["timestamp", "route"],
+        "transit_service_level": ["timestamp", "route"],
         "weather": ["timestamp"],
         "bikeshare": ["timestamp"],
         "academic_calendar": ["timestamp", "school"],

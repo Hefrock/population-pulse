@@ -33,6 +33,16 @@ class BostonProvider(CityDataProvider):
             # live=None lets the fetcher auto-detect based on MBTA_API_KEY
         )
 
+    def fetch_transit_service_level(self, start: str, end: str) -> pd.DataFrame:
+        cfg = self.config["transit"]
+        return mbta.fetch_transit_service_level(
+            base_url=cfg["base_url"],
+            routes=cfg["routes"],
+            start=start,
+            end=end,
+            timezone=self.timezone,
+        )
+
     def fetch_bikeshare(self, start: str, end: str) -> pd.DataFrame:
         cfg = self.config["bikeshare"]
         return bluebikes.fetch_bikeshare(

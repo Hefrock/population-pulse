@@ -13,15 +13,26 @@ day's upcoming-events snapshot is folded into a running history (see
 ``src/ingestion/events_archive.py``) rather than overwritten, so the events
 signal slowly accumulates real date overlap with historical hospital_demand.
 
-``transit``, ``weather``, ``bikeshare``, ``academic_calendar``, ``wastewater``,
-and ``hospital_demand`` all merge each fetch into their existing parquet file
-in place (see ``src/ingestion/timeseries_archive.py``) instead of overwriting
-it, so a wide one-time backfill plus the daily rolling fetch accumulate
-permanently rather than being capped at the rolling window. This is also how
-``bikeshare``'s GBFS fallback (a single "right now" snapshot) builds up a
-history over time, and how ``wastewater`` absorbs upstream revisions to
-already-fetched dates instead of getting stuck with a stale value forever
-(the merge's "newer fetch wins" tie-break applies here on purpose).
+``transit``, ``transit_service_level``, ``weather``, ``bikeshare``,
+``academic_calendar``, ``wastewater``, and ``hospital_demand`` all merge each
+fetch into their existing parquet file in place (see
+``src/ingestion/timeseries_archive.py``) instead of overwriting it, so a wide
+one-time backfill plus the daily rolling fetch accumulate permanently rather
+than being capped at the rolling window. This is also how ``bikeshare``'s
+GBFS fallback and ``transit_service_level`` (both a single "right now"
+snapshot) build up a history over time, and how ``wastewater`` absorbs
+upstream revisions to already-fetched dates instead of getting stuck with a
+stale value forever (the merge's "newer fetch wins" tie-break applies here on
+purpose).
+
+``transit_service_level`` is a *separate* signal from ``transit``, not a
+fallback folded into it: it measures vehicles currently in service (a stock),
+not fare-gate taps (a flow), so summing the two together in ``align()`` would
+corrupt ``transit``'s meaning even though their route-label vocabularies
+don't overlap enough to literally collide. See
+``src/ingestion/mbta.py::fetch_transit_service_level`` for the full reasoning
+-- this exists specifically because ``transit`` has a genuine 1-2 month
+publication lag (MBTA's documented cadence) that no amount of retrying fixes.
 """
 
 from __future__ import annotations
@@ -59,6 +70,7 @@ DATA_BRANCH_BASE = os.environ.get(
 # accumulate rather than be overwritten.
 TIMESERIES_KEY_COLUMNS = {
     "transit": ["timestamp", "route"],
+    "transit_service_level": ["timestamp", "route"],
     "weather": ["timestamp"],
     "bikeshare": ["timestamp"],
     "academic_calendar": ["timestamp", "school"],
@@ -106,6 +118,7 @@ def run(city: str, start: str, end: str) -> None:
 
     signals = {
         "transit": provider.fetch_transit,
+        "transit_service_level": provider.fetch_transit_service_level,
         "bikeshare": provider.fetch_bikeshare,
         "weather": provider.fetch_weather,
         "events": provider.fetch_events,

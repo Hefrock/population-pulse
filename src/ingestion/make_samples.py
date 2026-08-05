@@ -54,6 +54,28 @@ def make_transit() -> None:
     pd.DataFrame(rows).to_csv(SAMPLES / "mbta_ridership_sample.csv", index=False)
 
 
+def make_transit_service_level() -> None:
+    """Daily "vehicles currently in service" proxy, one point per route per
+    day -- mirrors mbta.fetch_live_vehicle_counts's real shape (a "right now"
+    snapshot accumulated daily, the same pattern bikeshare's GBFS fallback
+    already uses). A stock measure of service level, not the flow measure of
+    ridership make_transit() plants -- deliberately its own signal, see
+    mbta.fetch_transit_service_level for why they must never be merged.
+    """
+    days = _date_range()
+    routes = {
+        "Red": 20, "Orange": 15, "Blue": 10,
+        "Green-B": 8, "Green-C": 8, "Green-D": 8, "Green-E": 6,
+    }
+    rows = []
+    for route, base in routes.items():
+        for d in days:
+            weekday_factor = 0.6 if d.dayofweek >= 5 else 1.0  # fewer vehicles on weekends
+            value = base * weekday_factor * RNG.normal(1.0, 0.1)
+            rows.append({"timestamp": d, "route": route, "value": round(max(value, 0))})
+    pd.DataFrame(rows).to_csv(SAMPLES / "mbta_service_level_sample.csv", index=False)
+
+
 def make_bikeshare() -> None:
     """Daily ride-count proxy: strong summer/winter seasonality (Bluebikes
     ridership drops to a fraction of its peak in deep winter) plus a weekday
@@ -180,6 +202,7 @@ def main() -> None:
     SAMPLES.mkdir(parents=True, exist_ok=True)
     Path("data").mkdir(exist_ok=True)
     make_transit()
+    make_transit_service_level()
     make_bikeshare()
     make_weather()
     make_hospital()
