@@ -42,8 +42,9 @@ respiratory-demand proxy. See "Known limitations" for details.
 
 ## What it does
 
-1. **Ingests seven signals daily** via GitHub Actions:
+1. **Ingests eight signals daily** via GitHub Actions:
    - Transit volume (MBTA gated station entries — historical daily ridership, 2014–present)
+   - Transit service level (MBTA live-vehicle snapshot, accumulated daily — a same-day complement to gated-entry volume's 1-2 month publication lag; see "Data sources")
    - Bikeshare volume (Bluebikes trip-history archive — real daily ride counts, 2018–present, with a GBFS station-status fallback)
    - Weather (temperature, apparent temperature, precipitation)
    - Events (Sports and Music events via Ticketmaster; civic events via Boston.gov)
@@ -78,8 +79,9 @@ These are analyzed separately because they'd confound each other in a single cor
 
 | Signal | Source | Cadence | Key required |
 |--------|--------|---------|-------------|
-| Transit | MBTA Gated Station Entries (MassDOT open data) | Daily, 2014–present | None |
+| Transit | MBTA Gated Station Entries (MassDOT open data) | Daily, 2014–present, but published with a 1-2 month lag | None |
 | Transit (fallback) | MBTA V3 API | Real-time snapshot | Free — `api-v3.mbta.com` |
+| Transit service level | MBTA V3 API live-vehicle counts, accumulated daily into its own signal (never merged into `transit` — see `mbta.py::fetch_transit_service_level`) | Real-time snapshot, building its own history since introduction | Free — `api-v3.mbta.com` |
 | Bikeshare | Bluebikes trip-history archive (S3) | Daily ride counts, 2018–present (~1-2 month publication lag) | None |
 | Bikeshare (fallback) | Bluebikes GBFS `station_status` | Real-time snapshot (bikes docked, accumulated daily) | None |
 | Weather | Open-Meteo archive | Hourly historical | None |
@@ -98,7 +100,7 @@ These are analyzed separately because they'd confound each other in a single cor
 python scripts/build_ma_dph_csv.py path/to/RespiratoryDiseaseReporting*.xlsx
 ```
 
-**On the academic calendar:** there is no API for university term dates, so `data/boston_academic_calendar.csv` is a hand-curated reference (the same "manual baseline" pattern as the events CSV). Term dates are validated against each school's registrar and carry a `source` column (`verified-*`, `estimate`, or `prior-year-pattern`); refresh it ~10 minutes once a year when schools publish their next calendar.
+**On the academic calendar:** there is no API for university term dates, so `data/boston_academic_calendar.csv` is a hand-curated reference (the same "manual baseline" pattern as the events CSV). Term dates are validated against each school's registrar and carry a `source` column (`verified-*`, `estimate`, or `prior-year-pattern`); refresh it ~10 minutes once a year when schools publish their next calendar. `.github/workflows/academic-calendar-reminder.yml` opens a `[blocked-human]`-labeled GitHub issue every July so this refresh doesn't get forgotten between years — see `.github/academic-calendar-reminder-body.md` for the per-school checklist.
 
 **On wastewater:** [WastewaterSCAN](https://www.wastewaterscan.org/) publishes real twice-weekly viral concentrations for the Deer Island (metro-Boston) plant back to December 2022, covering all four target pathogens — this is now Tier 1 and is the source behind the correlation results below. It's reached through an undocumented-but-public JSON endpoint (no key, but no SLA either), so MWRA and CDC NWSS remain as fallbacks if it goes away. MWRA's tier is currently inert in practice — its machine-readable export URL moves over time and `wastewater.mwra.data_url` has never been set in `cities/boston.yaml`, so that fallback has not actually been exercised against live data.
 
@@ -148,11 +150,13 @@ population-pulse/
 │   ├── providers/       # abstract base + city implementations
 │   ├── ingestion/       # source fetchers (mbta, weather, ticketmaster,
 │   │                    #   academic_calendar, wastewater, ...)
-│   ├── analysis/        # timeline alignment, lagged correlation, count/surge regression
+│   ├── analysis/        # timeline alignment, lagged correlation, count/surge
+│   │                    #   regression, multiple-comparisons correction
 │   └── dashboard/       # Streamlit app
-├── tests/               # pytest suite (99 tests)
+├── tests/               # pytest suite (149 tests)
 ├── docs/                # narrated walkthrough
-└── .github/workflows/   # daily ingestion + PR test gate
+└── .github/workflows/   # daily ingestion, PR test gate, academic-calendar
+                          #   annual refresh reminder
 ```
 
 **Tech stack:** Python, pandas, scipy/statsmodels, Streamlit, Parquet, GitHub Actions.
@@ -169,12 +173,32 @@ Phase 2 (planned) will run matched-baseline event studies — comparing event da
 
 ## What we've found so far
 
-**tl;dr:** The most robust results so far come from transit, weather, and
-bikeshare, now backed by ~7 years of real history (up from 47–81 weeks):
-transit and weather **both reach significance** in the Negative-Binomial
-count model (p=0.011, p=0.024) — reversing the earlier "none of the three
-survive correction" conclusion — and bikeshare's surge logistic regression
-(AUC=0.66) is the strongest of any driver tested so far. **Wastewater's
+**tl;dr:** As of the latest full scan (8 drivers × lags 0–8, 424 aligned weekly
+observations), **13 of 72 driver-lag tests survive Benjamini-Hochberg
+correction for multiple comparisons** (18 are significant before correcting —
+correction is doing real work here, not a formality). `wastewater: Influenza A`
+is the cleanest surviving result — lag 4, corrected p≈0, and *not* flagged
+ambiguous (its best lag is unambiguously better than the runner-up).
+`transit`, `wastewater: SARS-CoV-2`, and `bikeshare` all also survive
+correction, but each is flagged **ambiguous** — the confidence interval
+around its best lag overlaps the runner-up lag's, so the specific lag number
+shouldn't be trusted, only "this driver relates to hospital demand somehow."
+`weather`, `academic_calendar`, `wastewater: RSV`, and the newer
+`transit_service_level` signal do not survive correction. This full-scan,
+corrected view (`src/analysis/multiple_comparisons.py`, exposed in the
+dashboard's Driver correlation matrix) replaced an earlier practice of
+reporting each driver's own best lag in isolation, which overstated how many
+"significant" results there really were — see "The full cross-driver
+picture" below for what changed and why. The dashboard also now supports
+walk-forward (expanding-window) out-of-sample validation
+(`src/analysis/regression.py`), so a driver's in-sample fit can be checked
+against genuinely held-out future weeks rather than trusted at face value.
+
+The older, driver-by-driver univariate results below (wastewater's lag-0
+story, the transit/weather/bikeshare backfill) are still accurate as
+described and are kept for the methodology lessons they carry — just read
+them knowing the corrected full-scan numbers above are the current
+higher-confidence picture. **Wastewater's
 lag-0 finding (Influenza A/RSV, AUC 0.67–0.68, p<0.01) no longer reproduces
 as the pipeline's automatic "best lag" pick** — `lagged_cross_correlation`
 now selects lag 4 for Influenza A and lag 7 for RSV, neither of which is a
@@ -325,16 +349,38 @@ event-level backtesting is still not possible *today* — but the archive is
 the prerequisite Phase 2's matched-baseline event studies need, and the
 sooner it starts accumulating the sooner that becomes possible.
 
-**One more caveat that applies to every result above: each is univariate.**
-Every number in this section tests one driver against respiratory ED demand
-in isolation — none of them control for the fact that the drivers are also
-correlated with *each other* (transit, bikeshare, and academic calendar
-especially). A result that looks like an independent effect on its own can
-weaken once a correlated driver is also accounted for. Rather than bake a
-specific number here that would go stale as more data accumulates, the
-dashboard's "Driver correlation matrix" view (Correlation & Regression tab)
-computes this live against whatever data is currently loaded — check it
-before treating any single-driver result above as independent.
+### The full cross-driver picture, with multiple-comparisons correction
+
+Every number in the sections above tests one driver against respiratory ED
+demand in isolation, scanning lags 0–8 and picking the best one — but running
+that many tests and reporting only the best result inflates how many
+"discoveries" look real (the classic multiple-comparisons problem), and none
+of it controls for the drivers being correlated with *each other* (transit,
+bikeshare, and academic calendar especially). `src/analysis/multiple_comparisons.py`
+now runs the full driver × lag family through Benjamini-Hochberg
+false-discovery-rate correction and flags each driver's best lag as
+**ambiguous** whenever its confidence interval overlaps the runner-up lag's —
+exposed in the dashboard's "Driver correlation matrix" view (Correlation &
+Regression tab), computed live against whatever data is currently loaded.
+
+As of this refresh: 13 of 72 driver-lag tests across 8 drivers survive
+correction. `wastewater: Influenza A` is the strongest and least ambiguous
+surviving result; `transit`, `wastewater: SARS-CoV-2`, and `bikeshare` survive
+but with ambiguous best-lag selection; `weather`, `academic_calendar`,
+`wastewater: RSV`, and `transit_service_level` do not survive. These numbers
+will keep moving as more history accumulates — check the dashboard rather
+than trusting this snapshot indefinitely.
+
+**Walk-forward validation is the other half of the rigor story.** A driver
+surviving correction on all available data still says nothing about whether
+it would have predicted a surge *before it happened* — `regression.py`'s
+`walk_forward_validate_count` / `walk_forward_validate_logistic` refit on an
+expanding window and score only genuinely-held-out future weeks (using the
+causal, trailing-only variant of `seasonal_residual` so no future data leaks
+into deseasonalization). Available in the dashboard's Correlation & Regression
+tab; not summarized here as a single number since, like the correlation
+matrix, it's meant to be checked live rather than memorized from a doc that
+will drift stale.
 
 ---
 
@@ -412,6 +458,17 @@ In the spirit of an honest status report, not just a feature list:
   that far, since 2018-07-01 already fully covers `hospital_demand`'s real
   history (MA DPH data starts 2019-06-30), so there's little marginal value
   in going earlier than the dependent variable itself.
+- **`transit`'s gated-entry source still has a genuine 1-2 month publication
+  lag — that's MBTA's own documented cadence, not a bug this project can fix
+  directly.** `transit_service_level` (MBTA's live-vehicle-count API,
+  accumulated daily, kept as a deliberately separate signal — see
+  `mbta.py::fetch_transit_service_level`) is a same-day complement, not a
+  replacement: it measures vehicles in service (a stock), not fare-gate taps
+  (a flow), and it's a new signal still building its own history, so it
+  doesn't yet have `transit`'s multi-year depth. It does not currently
+  survive multiple-comparisons correction in the full driver scan (see
+  "What we've found so far") — too new, too little history, or both; worth
+  re-checking as it accumulates.
 - ~~**`wastewater`, `hospital_demand`, and `academic_calendar` had the same
   ~1-year-cap bug, and it silently erased the data behind the wastewater
   headline result.**~~ **Fixed.** Only `transit`/`weather`/`bikeshare` were
@@ -460,12 +517,13 @@ In the spirit of an honest status report, not just a feature list:
 
 | Component | Status |
 |-----------|--------|
-| Ingestion pipeline | Working — transit, weather, events, academic calendar, wastewater, hospital demand. All six signals have a sample-data fallback. |
-| Daily GitHub Actions | Working — daily ingestion (`ingest.yml`) + PR test gate (`test.yml`) |
-| Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series, lagged regression panel |
+| Ingestion pipeline | Working — transit, transit service level, weather, bikeshare, events, academic calendar, wastewater, hospital demand. All eight signals have a sample-data fallback. |
+| Daily GitHub Actions | Working — daily ingestion (`ingest.yml`), PR test gate (`test.yml`), annual academic-calendar refresh reminder (`academic-calendar-reminder.yml`) |
+| Dashboard | Working — reads from data branch, no secrets needed; per-pathogen wastewater series, lagged regression panel, driver correlation matrix, walk-forward validation |
 | Cross-correlation analysis | Working — `src/analysis/correlate.py`, used by the dashboard |
-| Count + surge regression | Working, in the dashboard — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC), tested against real data for all four sub-hypotheses |
-| Test suite | 99 tests, all passing |
+| Multiple-comparisons correction | Working — `src/analysis/multiple_comparisons.py` (Benjamini-Hochberg FDR correction + lag-selection ambiguity detection across the full driver × lag family), used by the dashboard |
+| Count + surge regression | Working, in the dashboard — `src/analysis/regression.py` (Poisson/NB count models, surge-label logistic regression with AUC-ROC, walk-forward out-of-sample validation), tested against real data for all four sub-hypotheses |
+| Test suite | 149 tests, all passing |
 | Phase 2 event studies | Planned |
 | Second city | Architecture ready, untested |
 

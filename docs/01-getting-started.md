@@ -98,7 +98,8 @@ CityDataProvider  ◄── cities/boston.yaml  (all Boston-specific config)
 BostonProvider
       │  (delegates per source)
       ▼
-ingestion/{mbta, weather, events, hospital}.py
+ingestion/{mbta, weather, bluebikes, events, ticketmaster, civic_events,
+           academic_calendar, wastewater, hospital, cdc_fluview}.py
 ```
 
 ## 7. The trap you must not fall into
@@ -120,10 +121,14 @@ Each fetcher is honest about what it does:
 
 - **Weather** (`ingestion/weather.py`) — *fully working now.* Open-Meteo needs
   no key; real historical weather is one function call away.
-- **Transit** (`ingestion/mbta.py`) — has a *working live call*
-  (`fetch_live_vehicle_counts`) against the real MBTA API. Get a free key at
-  https://api-v3.mbta.com/, put it in `.env`, and the scheduled Action will
-  start accumulating real flow snapshots.
+- **Transit** (`ingestion/mbta.py`) — the primary `transit` signal is
+  historical MBTA gated-station-entry data, no key needed, but it's published
+  with a 1-2 month lag. `fetch_live_vehicle_counts` also has a *working live
+  call* against the real MBTA API — get a free key at https://api-v3.mbta.com/,
+  put it in `.env`, and the scheduled Action will start accumulating it as a
+  **separate** `transit_service_level` signal (same-day, but a different
+  quantity — vehicles in service, not fare-gate taps — so it's deliberately
+  never merged into `transit`'s own history; see `mbta.py::fetch_transit_service_level`).
 - **Events** (`ingestion/events.py`) — reads `data/boston_events.csv`. Just edit
   that CSV with real dates; it's already wired in.
 - **Hospital demand** (`ingestion/hospital.py`) — download the weekly file from
@@ -136,9 +141,21 @@ missing, so you're never blocked.
 
 ## 9. What's next (Phase 2 preview)
 
-- Automate the MA DPH weekly download.
-- Add **event-study analysis**: compare ED demand on event days against matched
-  non-event baseline days, per sub-hypothesis.
-- Quantify effect sizes and lags with confidence intervals.
+Since this chapter was written, the project already picked up a chunk of
+Phase 1's promised rigor: `lagged_cross_correlation` now reports confidence
+intervals and p-values, `src/analysis/multiple_comparisons.py` corrects for
+testing many drivers/lags at once (and flags ambiguous lag picks), and
+`regression.py` supports walk-forward out-of-sample validation. The MA DPH
+weekly download stayed manual on purpose — see README's "Data sources" for
+why — but got provisional-tail handling instead so a partial latest week
+doesn't get mistaken for a real drop.
+
+What's still ahead:
+
+- **Event-study analysis**: compare ED demand on event days against matched
+  non-event baseline days, per sub-hypothesis — the real answer to "is this
+  correlation causal," which lagged correlation alone can't give you.
+- A second city, to prove out the `CityDataProvider` abstraction against
+  more than just Boston.
 
 That chapter will land as `docs/02-event-studies.md` when we build it.
