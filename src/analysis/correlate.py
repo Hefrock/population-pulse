@@ -66,8 +66,8 @@ def _first_numeric(df: pd.DataFrame) -> str | None:
     return None
 
 
-def seasonal_residual(series: pd.Series, window: int | None = None) -> pd.Series:
-    """Remove a centered rolling-mean seasonal/trend component.
+def seasonal_residual(series: pd.Series, window: int | None = None, causal: bool = False) -> pd.Series:
+    """Remove a rolling-mean seasonal/trend component.
 
     This is the same cheap deseasonalization ``lagged_cross_correlation`` uses
     internally, factored out so other analyses (e.g. the logistic-regression
@@ -76,11 +76,23 @@ def seasonal_residual(series: pd.Series, window: int | None = None) -> pd.Series
 
     ``window`` defaults to ``min(13, max(3, len(series) // 4))`` — roughly a
     quarter, capped at 13 weeks (one season) and floored at 3.
+
+    By default the rolling window is *centered*, i.e. a week's residual is
+    computed using data from both before and after it — fine for retrospective
+    description ("was this week elevated for its season?"), but it leaks
+    future information into any week's residual, which matters if that
+    residual then becomes a label used inside a training fold. Pass
+    ``causal=True`` for a trailing-only window (this week and the
+    ``window - 1`` weeks before it) instead — needed by
+    ``regression.walk_forward_validate_logistic``. A causal rolling stat's
+    value at any row depends only on that row and earlier ones, so it's safe
+    to compute once over the whole series and reuse across every walk-forward
+    fold without leaking future data into the training folds that use it.
     """
     s = series.astype(float)
     if window is None:
         window = min(13, max(3, len(s) // 4))
-    return s - s.rolling(window, center=True, min_periods=1).mean()
+    return s - s.rolling(window, center=not causal, min_periods=1).mean()
 
 
 def driver_correlation_matrix(

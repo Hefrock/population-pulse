@@ -6,12 +6,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.analysis import regression
 from src.analysis.regression import (
     build_lagged_design_matrix,
     build_surge_labels,
     driver_vif,
     fit_count_regression,
     fit_logistic_regression,
+    walk_forward_validate_count,
+    walk_forward_validate_logistic,
 )
 
 
@@ -171,3 +174,70 @@ def test_fit_logistic_regression_rejects_single_class_label():
         # quantile=1.0 -> threshold == max residual -> nothing is strictly
         # greater -> every week labeled 0.
         fit_logistic_regression(aligned, "hospital_demand", {"driver": 2}, surge_quantile=1.0)
+
+
+def test_expanding_window_splits_train_grows_and_never_overlaps_test():
+    splits = regression._expanding_window_splits(n=100, n_splits=5, min_train=50)
+    assert len(splits) == 5
+    prev_train_end = 0
+    for train_slice, test_slice in splits:
+        assert train_slice.start == 0
+        assert train_slice.stop >= prev_train_end  # train never shrinks
+        assert test_slice.start == train_slice.stop  # test starts exactly where train ends
+        assert test_slice.stop > test_slice.start    # non-empty test block
+        prev_train_end = train_slice.stop
+    # every split after the first trains on strictly more data than the last
+    assert splits[-1][0].stop > splits[0][0].stop
+
+
+def test_expanding_window_splits_requires_enough_rows():
+    with pytest.raises(ValueError, match="Only .* rows"):
+        regression._expanding_window_splits(n=10, n_splits=5, min_train=50)
+
+
+def test_walk_forward_validate_count_reports_out_of_sample_error():
+    aligned = _planted_aligned(n=200, lag=2, beta=0.8)
+    result = walk_forward_validate_count(aligned, "hospital_demand", {"driver": 2})
+
+    assert result.family == "negative_binomial"
+    assert result.n_splits == 5
+    assert len(result.fold_mean_absolute_error) == result.n_splits
+    assert len(result.fold_n_test) == result.n_splits
+    assert all(mae > 0 for mae in result.fold_mean_absolute_error)
+    assert result.mean_out_of_sample_mae == pytest.approx(
+        np.mean(result.fold_mean_absolute_error)
+    )
+    # a well-specified model on this much data shouldn't blow up out-of-sample
+    assert result.mean_out_of_sample_mae < 10
+
+
+def test_walk_forward_validate_count_requires_enough_data():
+    aligned = _planted_aligned(n=30, lag=2)
+    with pytest.raises(ValueError, match="Only .* rows"):
+        walk_forward_validate_count(aligned, "hospital_demand", {"driver": 2})
+
+
+def test_walk_forward_validate_count_rejects_unknown_family():
+    aligned = _planted_aligned(n=200, lag=2)
+    with pytest.raises(ValueError, match="Unknown family"):
+        walk_forward_validate_count(aligned, "hospital_demand", {"driver": 2}, family="logit")
+
+
+def test_walk_forward_validate_logistic_reports_out_of_sample_auc():
+    aligned = _planted_surge_aligned(n=200, lag=2)
+    result = walk_forward_validate_logistic(aligned, "hospital_demand", {"driver": 2})
+
+    assert result.n_splits == 5
+    assert len(result.fold_auc) == result.n_splits
+    assert len(result.fold_n_surge_test) == result.n_splits
+    assert all(0 <= auc <= 1 for auc in result.fold_auc)
+    assert result.mean_out_of_sample_auc == pytest.approx(np.mean(result.fold_auc))
+    # a strong, clean planted signal should still show up clearly out-of-sample
+    assert result.mean_out_of_sample_auc > 0.6
+    assert result.in_sample_auc > 0.5
+
+
+def test_walk_forward_validate_logistic_requires_enough_data():
+    aligned = _planted_surge_aligned(n=30, lag=2)
+    with pytest.raises(ValueError, match="Only .* rows"):
+        walk_forward_validate_logistic(aligned, "hospital_demand", {"driver": 2})

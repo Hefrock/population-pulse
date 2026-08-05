@@ -55,6 +55,54 @@ def test_align_skips_empty_signal():
     assert "empty" not in result.columns
 
 
+def test_seasonal_residual_causal_matches_centered_shape():
+    t = pd.date_range("2024-01-07", periods=40, freq="W", tz="UTC")
+    s = pd.Series(np.random.default_rng(5).standard_normal(40), index=t)
+    causal = correlate.seasonal_residual(s, causal=True)
+    centered = correlate.seasonal_residual(s, causal=False)
+    assert len(causal) == len(s)
+    # different windowing -> different values in general (not asserting exact
+    # numbers, just that causal=True actually changes behavior from the default)
+    assert not causal.equals(centered)
+
+
+def test_seasonal_residual_causal_is_unaffected_by_future_values():
+    """The whole point of causal=True: a row's residual must depend only on
+    that row and earlier ones. Changing a later value must not change an
+    earlier row's residual -- this is what makes it safe to compute once and
+    reuse across every walk-forward fold without leaking future data."""
+    t = pd.date_range("2024-01-07", periods=30, freq="W", tz="UTC")
+    rng = np.random.default_rng(6)
+    s = pd.Series(rng.standard_normal(30), index=t)
+
+    residual_before = correlate.seasonal_residual(s, window=5, causal=True)
+
+    s_altered = s.copy()
+    s_altered.iloc[20:] = s_altered.iloc[20:] + 1000.0  # blow up everything from row 20 on
+    residual_after = correlate.seasonal_residual(s_altered, window=5, causal=True)
+
+    # rows before the altered region must be identical
+    pd.testing.assert_series_equal(residual_before.iloc[:20], residual_after.iloc[:20])
+
+
+def test_seasonal_residual_centered_is_affected_by_future_values():
+    """Contrast case: the default centered window is NOT leak-safe -- this is
+    exactly why walk-forward validation needs causal=True instead."""
+    t = pd.date_range("2024-01-07", periods=30, freq="W", tz="UTC")
+    rng = np.random.default_rng(7)
+    s = pd.Series(rng.standard_normal(30), index=t)
+
+    residual_before = correlate.seasonal_residual(s, window=5, causal=False)
+
+    s_altered = s.copy()
+    s_altered.iloc[20:] = s_altered.iloc[20:] + 1000.0
+    residual_after = correlate.seasonal_residual(s_altered, window=5, causal=False)
+
+    # rows just before the altered region fall inside the centered window of
+    # the altered values and must change
+    assert not residual_before.iloc[15:20].equals(residual_after.iloc[15:20])
+
+
 def test_lagged_cross_correlation_detects_planted_lag():
     """A planted 2-week lag in a random series must be recovered exactly.
 

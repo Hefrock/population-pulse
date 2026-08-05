@@ -31,7 +31,13 @@ import streamlit as st
 
 from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation, scan_drivers, seasonal_residual
 from src.analysis.multiple_comparisons import apply_correction, summarize_scan
-from src.analysis.regression import driver_vif, fit_count_regression, fit_logistic_regression
+from src.analysis.regression import (
+    driver_vif,
+    fit_count_regression,
+    fit_logistic_regression,
+    walk_forward_validate_count,
+    walk_forward_validate_logistic,
+)
 from src.ingestion.hospital import PROVISIONAL_WEEKS, provisional_cutoff
 
 DATA_BRANCH_BASE = os.environ.get(
@@ -505,6 +511,43 @@ def _render_correlation_and_regression(
     except ValueError as exc:
         st.info(f"Count regression: {exc}")
 
+    with st.expander("Out-of-sample validation (walk-forward)"):
+        st.caption(
+            "Every metric above is **in-sample** — the model graded on the "
+            "same data it was fit on. This refits the same models using only "
+            "*past* data at each step (5 expanding-window folds, 52-week "
+            "minimum training window) and scores them on weeks they never "
+            "saw. A wide gap between the in-sample and out-of-sample numbers "
+            "is the signature of overfitting."
+        )
+        try:
+            wf_logit = walk_forward_validate_logistic(
+                aligned, "hospital_demand", {driver: reg_lag}, surge_quantile=surge_quantile,
+            )
+            l1, l2 = st.columns(2)
+            l1.metric("AUC-ROC (surge) — in-sample", f"{wf_logit.in_sample_auc:.2f}")
+            l2.metric("AUC-ROC (surge) — out-of-sample", f"{wf_logit.mean_out_of_sample_auc:.2f}")
+            st.caption(
+                f"{wf_logit.n_splits} walk-forward folds; per-fold AUC: "
+                + ", ".join(f"{a:.2f}" for a in wf_logit.fold_auc)
+            )
+        except ValueError as exc:
+            st.info(f"Walk-forward surge validation: {exc}")
+
+        try:
+            wf_count = walk_forward_validate_count(
+                aligned, "hospital_demand", {driver: reg_lag}, family=count_family,
+            )
+            c1, c2 = st.columns(2)
+            c1.metric("Mean absolute error — in-sample", f"{wf_count.mean_in_sample_mae:.1f}")
+            c2.metric("Mean absolute error — out-of-sample", f"{wf_count.mean_out_of_sample_mae:.1f}")
+            st.caption(
+                f"{wf_count.n_splits} walk-forward folds; per-fold MAE: "
+                + ", ".join(f"{m:.1f}" for m in wf_count.fold_mean_absolute_error)
+            )
+        except ValueError as exc:
+            st.info(f"Walk-forward count validation: {exc}")
+
     with st.expander("Methodology & caveats"):
         st.markdown(
             "- Correlation and regression here are **suggestive, not causal** — "
@@ -513,8 +556,12 @@ def _render_correlation_and_regression(
             "- With roughly a year of weekly data and several lagged drivers, "
             "these models are easy to overfit — prefer fewer, better-justified "
             "lags (e.g. the one `lagged_cross_correlation` already flagged).\n"
-            "- Weekly demand is heavily autocorrelated, so these are in-sample "
-            "fits, not validated forecasts.\n"
+            "- Weekly demand is heavily autocorrelated, so a random train/test "
+            "split would leak future information into training — see "
+            "\"Out-of-sample validation\" above for the walk-forward "
+            "(expanding-window) numbers instead. In-sample metrics elsewhere "
+            "on this page still answer \"does this fit,\" not \"does this "
+            "generalize.\"\n"
             "- Confirm anything interesting with matched-baseline event studies "
             "planned for Phase 2."
         )
