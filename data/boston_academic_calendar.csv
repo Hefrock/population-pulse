@@ -3,31 +3,44 @@ Boston University,34000,Fall 2024,2024-09-03,2024-12-20,prior-year-pattern
 Boston University,34000,Spring 2025,2025-01-21,2025-05-08,prior-year-pattern
 Boston University,34000,Fall 2025,2025-09-02,2025-12-19,verified-2025-06
 Boston University,34000,Spring 2026,2026-01-20,2026-05-08,verified-2025-06
+Boston University,34000,Fall 2026,2026-09-02,2026-12-18,estimate
 Northeastern University,30000,Fall 2024,2024-09-04,2024-12-16,prior-year-pattern
 Northeastern University,30000,Spring 2025,2025-01-06,2025-04-26,prior-year-pattern
 Northeastern University,30000,Fall 2025,2025-09-03,2025-12-14,verified-2025-06
 Northeastern University,30000,Spring 2026,2026-01-07,2026-04-26,verified-2025-06
+Northeastern University,30000,Fall 2026,2026-09-09,2026-12-20,estimate
+Northeastern University,30000,Spring 2027,2027-01-13,2027-05-02,estimate
 Harvard University,25000,Fall 2024,2024-09-03,2024-12-18,prior-year-pattern
 Harvard University,25000,Spring 2025,2025-01-27,2025-05-08,prior-year-pattern
 Harvard University,25000,Fall 2025,2025-09-03,2025-12-20,verified-2025-06
 Harvard University,25000,Spring 2026,2026-01-26,2026-05-16,verified-2025-06
+Harvard University,25000,Fall 2026,2026-09-02,2026-12-19,estimate
+Harvard University,25000,Spring 2027,2027-01-25,2027-05-16,estimate
 Boston College,15000,Fall 2024,2024-08-26,2024-12-19,prior-year-pattern
 Boston College,15000,Spring 2025,2025-01-13,2025-05-13,prior-year-pattern
 Boston College,15000,Fall 2025,2025-08-25,2025-12-18,verified-2025-06
 Boston College,15000,Spring 2026,2026-01-12,2026-05-12,verified-2025-06
+Boston College,15000,Fall 2026,2026-08-31,2026-12-21,estimate
+Boston College,15000,Spring 2027,2027-01-19,2027-05-18,estimate
 UMass Boston,14000,Fall 2024,2024-09-03,2024-12-18,prior-year-pattern
 UMass Boston,14000,Spring 2025,2025-01-27,2025-05-21,prior-year-pattern
 UMass Boston,14000,Fall 2025,2025-09-02,2025-12-18,verified-2025-06
 UMass Boston,14000,Spring 2026,2026-01-26,2026-05-22,verified-2025-06
+UMass Boston,14000,Fall 2026,2026-09-08,2026-12-18,verified-2026-08
+UMass Boston,14000,Spring 2027,2027-01-25,2027-05-21,verified-2026-08
 Tufts University,12500,Fall 2024,2024-09-04,2024-12-19,prior-year-pattern
 Tufts University,12500,Spring 2025,2025-01-16,2025-05-09,prior-year-pattern
 Tufts University,12500,Fall 2025,2025-09-02,2025-12-18,verified-2025-06
 Tufts University,12500,Spring 2026,2026-01-14,2026-05-08,verified-2025-06
+Tufts University,12500,Fall 2026,2026-09-08,2026-12-23,estimate
 MIT,11500,Fall 2024,2024-09-04,2024-12-18,prior-year-pattern
 MIT,11500,Spring 2025,2025-02-03,2025-05-21,prior-year-pattern
 MIT,11500,Fall 2025,2025-09-03,2025-12-19,verified-2025-06
 MIT,11500,Spring 2026,2026-02-02,2026-05-20,verified-2025-06
+MIT,11500,Fall 2026,2026-09-09,2026-12-18,estimate
+MIT,11500,Spring 2027,2027-02-01,2027-05-19,estimate
 Suffolk University,9000,Fall 2024,2024-09-04,2024-12-18,estimate
 Suffolk University,9000,Spring 2025,2025-01-21,2025-05-08,estimate
 Suffolk University,9000,Fall 2025,2025-09-03,2025-12-18,estimate
 Suffolk University,9000,Spring 2026,2026-01-20,2026-05-08,estimate
+Suffolk University,9000,Fall 2026,2026-09-09,2026-12-18,estimate

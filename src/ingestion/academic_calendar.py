@@ -7,13 +7,24 @@ session -> ILI ticks up a couple weeks later" is one of the most reliable
 seasonal patterns in surveillance data). It's currently absent from the
 pipeline's events/weather/transit trio.
 
-There is no API for term dates: schools publish them as PDFs or HTML pages
-that change layout every year, so scraping them would be the most fragile
-fetcher in the pipeline. Instead this is a hand-curated reference CSV
+Most of these schools publish term dates as PDFs or HTML pages that change
+layout every year, so scraping them would be the most fragile fetcher in the
+pipeline. This is a hand-curated reference CSV
 (``data/boston_academic_calendar.csv``, columns: school, enrollment, term,
 start_date, end_date, source) — the same "manual baseline" pattern already
 used for ``boston_events.csv``. It needs a ~10-minute refresh once a year when
-each school publishes its next academic calendar.
+each school publishes its next academic calendar; a scheduled reminder (see
+``.github/workflows/academic-calendar-reminder.yml``) opens an issue
+annually so this doesn't silently drift stale between refreshes, which is
+exactly what happened before that existed (see the project's 2026-08 sitrep).
+
+Two schools are a known exception worth revisiting: Harvard and MIT both
+publish a real ICS/iCalendar feed for their academic calendar (confirmed via
+web research, not yet integrated — see the reminder issue template for the
+candidate Harvard feed URL and why it wasn't wired in blind). If that gets
+built out, those two rows could come from real ingestion instead of manual
+entry; the other schools still need a genuine source-availability check
+before assuming they're stuck as PDFs forever.
 
 Date conventions, so the curated rows stay consistent:
   * ``start_date`` = first day of classes (move-in is a few days earlier; the

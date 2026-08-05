@@ -1,0 +1,49 @@
+name: Academic Calendar Refresh Reminder
+
+# data/boston_academic_calendar.csv has no API behind it (see
+# src/ingestion/academic_calendar.py's docstring for why scraping was ruled
+# out) -- it needs a ~10-minute manual refresh whenever schools publish their
+# next academic year, and that's easy to forget since it's only once a year.
+# This opens a reminder issue automatically instead of relying on someone to
+# remember. See .github/academic-calendar-reminder-body.md for the checklist
+# and school links, and the 2026-08 sitrep for why this exists: the file
+# drifted 68 days stale before anyone noticed it needed attention.
+
+on:
+  schedule:
+    # July 15, annually. Most of these schools publish their next academic
+    # year's calendar in early-to-mid summer (confirmed for Harvard: their
+    # 2026-2027 calendar announcement was dated July 2026) -- mid-July gives
+    # a little buffer past the earliest publishers.
+    - cron: '0 13 15 7 *'
+  workflow_dispatch: {}
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for an existing open reminder
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          existing=$(gh issue list --label "blocked-human" --state open \
+            --search "\"Academic calendar annual refresh\" in:title" \
+            --json number --jq 'length')
+          echo "count=$existing" >> "$GITHUB_OUTPUT"
+
+      - name: Open reminder issue
+        if: steps.check.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh issue create \
+            --title "[blocked-human] Academic calendar annual refresh — $(date -u +%Y)" \
+            --label "blocked-human" \
+            --body-file .github/academic-calendar-reminder-body.md
