@@ -245,3 +245,40 @@ def lagged_cross_correlation(
         ambiguous=_is_ambiguous(ci_low, ci_high, order),
         deseasonalized=deseasonalize,
     )
+
+
+def scan_drivers(
+    aligned: pd.DataFrame,
+    response: str,
+    drivers: list[str] | None = None,
+    max_lag: int = 8,
+    deseasonalize: bool = True,
+) -> dict[str, CrossCorrResult]:
+    """Run ``lagged_cross_correlation`` for every driver against ``response``.
+
+    Every result reported anywhere in this project (README, dashboard) has
+    tested one driver in isolation. This is the batch version, needed to
+    correct across *every* driver x lag combination together rather than
+    just one driver's own lags (see ``multiple_comparisons.summarize_scan``,
+    which is the natural next step on this function's output) -- the
+    difference between "the one driver that survived" and "the one driver
+    that happened to survive the most looks *across the whole scan*."
+
+    ``drivers`` defaults to every column of ``aligned`` except ``response``.
+    A driver with too little overlapping data to test is silently omitted
+    from the result (see ``lagged_cross_correlation``'s ValueError) rather
+    than aborting the whole scan -- callers that need to know which drivers
+    were skipped should diff ``drivers`` against the returned dict's keys.
+    """
+    if drivers is None:
+        drivers = [c for c in aligned.columns if c != response]
+    results = {}
+    for driver in drivers:
+        try:
+            results[driver] = lagged_cross_correlation(
+                aligned[driver], aligned[response],
+                max_lag=max_lag, deseasonalize=deseasonalize,
+            )
+        except ValueError:
+            continue
+    return results
