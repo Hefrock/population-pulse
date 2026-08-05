@@ -57,6 +57,25 @@ class CityDataProvider(ABC):
         Returns columns: ``timestamp``, ``route``, ``value`` (a flow proxy).
         """
 
+    def fetch_transit_service_level(self, start: str, end: str) -> pd.DataFrame:
+        """Optional: live transit *service level* (vehicles currently in
+        service), a stock measure distinct from ``fetch_transit``'s ridership
+        flow measure.
+
+        Not every city has an equivalent live-snapshot source, so this has a
+        concrete no-op default (empty frame) rather than being abstract —
+        override it only if the city's transit fetcher has a live-snapshot
+        fallback worth accumulating as its own signal (see
+        ``src/providers/boston.py``). It must stay a genuinely separate
+        signal from ``fetch_transit``, never merged into its history:
+        ``align()`` sums every row sharing a timestamp regardless of route,
+        so splicing a stock measure into a flow measure's accumulated column
+        would corrupt the composite's meaning.
+
+        Returns columns: ``timestamp``, ``route``, ``value``.
+        """
+        return pd.DataFrame(columns=["timestamp", "route", "value"])
+
     @abstractmethod
     def fetch_bikeshare(self, start: str, end: str) -> pd.DataFrame:
         """Bike-share activity between ``start`` and ``end`` (ISO dates).

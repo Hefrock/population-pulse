@@ -454,6 +454,76 @@ def test_fetch_ridership_falls_back_to_sample_when_historical_fails(monkeypatch,
     assert list(df.columns) == ["timestamp", "route", "value"]
 
 
+# --- transit_service_level: separate signal, never merged into transit -----
+
+def test_fetch_transit_service_level_uses_live_snapshot_when_available(monkeypatch):
+    """A successful V3 API call is used directly -- never falls through to
+    the sample."""
+    class _Resp:
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {"data": [{"id": "v1"}, {"id": "v2"}]}
+
+    monkeypatch.setattr(mbta.requests, "get", lambda *a, **k: _Resp())
+    monkeypatch.setenv("MBTA_API_KEY", "test-key")
+
+    df = mbta.fetch_transit_service_level(
+        base_url="https://api-v3.mbta.com", routes=["Red"],
+        start="2025-06-01", end="2025-06-30", timezone="America/New_York",
+    )
+    assert list(df.columns) == ["timestamp", "route", "value"]
+    assert df["value"].tolist() == [2]  # 2 vehicles from the fake response
+
+
+def test_fetch_transit_service_level_falls_back_to_sample_when_api_fails(monkeypatch, tmp_path):
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(mbta.requests, "get", boom)
+
+    sample = tmp_path / "mbta_service_level_sample.csv"
+    pd.DataFrame({
+        "timestamp": ["2025-06-10", "2025-06-11"],
+        "route": ["Red", "Red"],
+        "value": [18, 21],
+    }).to_csv(sample, index=False)
+    monkeypatch.setattr(mbta, "SERVICE_LEVEL_SAMPLE_PATH", sample)
+
+    df = mbta.fetch_transit_service_level(
+        base_url="https://api-v3.mbta.com", routes=["Red"],
+        start="2025-06-01", end="2025-06-30", timezone="America/New_York",
+    )
+    assert not df.empty
+    assert list(df.columns) == ["timestamp", "route", "value"]
+
+
+def test_fetch_transit_service_level_sample_covers_window_past_its_own_dates(monkeypatch, tmp_path):
+    """Same aged-sample guard as weather/wastewater/hospital: a window years
+    past the frozen sample must still return data (shifted by whole years),
+    not clip to zero rows. The requested window falls on the same month/day
+    as the sample (just 3 years later) -- a whole-year shift preserves
+    month/day, not day-of-year, so an arbitrary future window wouldn't
+    necessarily overlap a sample this narrow."""
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(mbta.requests, "get", boom)
+
+    sample = tmp_path / "mbta_service_level_sample.csv"
+    pd.DataFrame({
+        "timestamp": pd.date_range("2025-06-01", periods=30, freq="D"),
+        "route": ["Red"] * 30,
+        "value": range(30),
+    }).to_csv(sample, index=False)
+    monkeypatch.setattr(mbta, "SERVICE_LEVEL_SAMPLE_PATH", sample)
+
+    future_start, future_end = "2029-06-05", "2029-06-12"
+    df = mbta.fetch_transit_service_level(
+        base_url="https://api-v3.mbta.com", routes=["Red"],
+        start=future_start, end=future_end, timezone="America/New_York",
+    )
+    assert not df.empty
+
+
 # --- Academic-calendar population-driver ------------------------------------
 
 def _write_calendar_csv(path, school="Test U", enrollment=1000,

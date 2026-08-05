@@ -36,7 +36,10 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from src.ingestion.sample_window import shift_sample_to_window
+
 SAMPLE_PATH = Path("data/samples/mbta_ridership_sample.csv")
+SERVICE_LEVEL_SAMPLE_PATH = Path("data/samples/mbta_service_level_sample.csv")
 REQUEST_TIMEOUT = 60
 DOWNLOAD_TIMEOUT = 180  # CSV downloads can be tens of MB
 # ArcGIS Online's content endpoint describes a published item. Feature-service
@@ -368,6 +371,57 @@ def fetch_live_vehicle_counts(base_url: str, routes: list[str]) -> pd.DataFrame:
         rows.append({"timestamp": now, "route": route, "value": count})
 
     return pd.DataFrame(rows)
+
+
+def fetch_transit_service_level(
+    base_url: str, routes: list[str], start: str, end: str, timezone: str,
+) -> pd.DataFrame:
+    """Accumulated version of ``fetch_live_vehicle_counts`` -- a *separate*
+    signal, not a fallback within ``fetch_ridership``.
+
+    ``fetch_ridership``'s historical gated-entries source has a genuine 1-2
+    month publication lag (MBTA's own documented cadence, not a bug in this
+    fetcher), so ``transit`` is structurally always somewhat stale. This
+    fetcher's data is current as of every daily run, but it measures a
+    fundamentally different thing -- vehicles in service right now (a stock),
+    not fare-gate taps (a flow) -- so it must accumulate as its own signal,
+    never merged into ``transit``'s history: ``align()`` sums every row
+    sharing a timestamp regardless of route, so splicing a stock measure into
+    a flow measure's column would corrupt the composite's meaning even though
+    the two sources' route-label vocabularies don't even overlap (checked:
+    gated-entries uses "Red Line"/"Green Line"/etc., the V3 API config uses
+    "Red"/"Green-B"/etc., so they'd never collide via key-based dedup either
+    way -- the risk here was always semantic, not a literal overwrite).
+
+    Falls back to the bundled sample if the V3 API is unreachable, matching
+    every other fetcher's fail-soft pattern. Returns ``timestamp``, ``route``,
+    ``value`` (vehicle-in-service count), same shape as ``fetch_ridership``.
+    """
+    try:
+        snapshot = fetch_live_vehicle_counts(base_url, routes)
+        if not snapshot.empty:
+            return snapshot
+        print("[mbta] Live vehicle snapshot returned no rows; falling back to sample.")
+    except Exception as exc:  # noqa: BLE001 - fall back, don't kill the run
+        print(f"[mbta] Live vehicle snapshot failed ({exc}); falling back to sample.")
+    return _load_service_level_sample(start, end, timezone)
+
+
+def _load_service_level_sample(start: str, end: str, timezone: str) -> pd.DataFrame:
+    """Load and window the bundled service-level sample series."""
+    if not SERVICE_LEVEL_SAMPLE_PATH.exists():
+        raise FileNotFoundError(
+            f"Sample data missing at {SERVICE_LEVEL_SAMPLE_PATH}. "
+            "Run `python -m src.ingestion.make_samples` to regenerate it."
+        )
+    df = pd.read_csv(SERVICE_LEVEL_SAMPLE_PATH, parse_dates=["timestamp"])
+    df = shift_sample_to_window(df, start, end)
+    if df["timestamp"].dt.tz is None:
+        df["timestamp"] = df["timestamp"].dt.tz_localize(timezone)
+    mask = (df["timestamp"] >= pd.Timestamp(start, tz=timezone)) & (
+        df["timestamp"] <= pd.Timestamp(end, tz=timezone)
+    )
+    return df.loc[mask].reset_index(drop=True)
 
 
 def _load_sample(start: str, end: str, timezone: str) -> pd.DataFrame:
