@@ -30,6 +30,7 @@ import requests
 import streamlit as st
 
 from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation, seasonal_residual
+from src.analysis.multiple_comparisons import apply_correction
 from src.analysis.regression import driver_vif, fit_count_regression, fit_logistic_regression
 from src.ingestion.hospital import PROVISIONAL_WEEKS, provisional_cutoff
 
@@ -381,6 +382,18 @@ def _render_correlation_and_regression(
         st.warning(str(exc))
         return
 
+    # Multiple-comparisons correction across this driver's own lag scan (0-8):
+    # a "significant" p-value picked out of 9 tests needs a higher bar than
+    # one tested in isolation. This is a narrower family than every driver x
+    # lag combination reported anywhere (e.g. in the README) -- correcting
+    # across that wider scan would be stricter still.
+    correction = apply_correction(
+        pd.Series(result.pvalues, index=result.lags), alpha=0.05,
+    )
+    best_lag_idx = result.lags.index(result.best_lag)
+    corrected_best_pvalue = correction.corrected_pvalues[best_lag_idx]
+    best_lag_significant = correction.significant[best_lag_idx]
+
     corr_df = pd.DataFrame({
         "lag_weeks": result.lags,
         "correlation": result.correlations,
@@ -411,7 +424,22 @@ def _render_correlation_and_regression(
         value=f"{result.best_corr:+.2f}",
         delta=f"at lag {result.best_lag} weeks",
     )
-    st.caption(f"p={result.best_pvalue:.4f} at the selected lag.")
+    st.caption(
+        f"p={result.best_pvalue:.4f} raw / p={corrected_best_pvalue:.4f} "
+        "corrected (Benjamini-Hochberg, across this driver's 9 tested lags) "
+        "at the selected lag. "
+        f"{correction.n_significant_corrected} of {correction.n_tests} lags "
+        f"survive correction (vs. {correction.n_significant_raw} that looked "
+        "significant before it)."
+    )
+    if correction.n_significant_raw and not best_lag_significant:
+        st.warning(
+            "⚠️ **The selected lag doesn't survive multiple-comparisons "
+            "correction** — it looked significant when tested in isolation, "
+            "but not once accounting for all 9 lags scanned for this driver. "
+            "Treat this specific result as a candidate to re-test on new "
+            "data, not a confirmed finding."
+        )
     if result.ambiguous:
         st.warning(
             "⚠️ **This lag isn't a clear winner** — its confidence interval "
