@@ -25,7 +25,7 @@ pip install -r requirements.txt              # deps
 python -m src.ingestion.make_samples          # regenerate synthetic sample data
 python -m src.ingestion.run --city boston     # full ingest (writes data/boston/*.parquet)
 streamlit run src/dashboard/app.py            # dashboard
-pytest tests/ -q                              # test suite (currently 67)
+pytest tests/ -q                              # test suite (currently 149)
 ```
 
 `run.py` accepts `--start`/`--end` (ISO dates); default is the trailing 365 days.
@@ -42,12 +42,14 @@ cities/boston.yaml         # the single place Boston-specific facts live
 src/providers/base.py      # abstract CityDataProvider (one fetch_* per signal)
 src/providers/boston.py    # concrete Boston provider — delegates to ingestion/
 src/ingestion/*.py         # one fetcher per source; returns a tidy DataFrame
-src/analysis/correlate.py  # align(), seasonal_residual(), lagged_cross_correlation()
-src/analysis/regression.py # multi-driver lagged Poisson/NB regression + surge-label logistic regression (AUC-ROC)
-src/dashboard/app.py       # Streamlit; reads Parquet, no API keys — uses correlate + regression
+src/analysis/correlate.py  # align(), seasonal_residual(), lagged_cross_correlation(), driver_correlation_matrix(), scan_drivers()
+src/analysis/regression.py # multi-driver lagged Poisson/NB regression + surge-label logistic regression (AUC-ROC); driver_vif(); walk_forward_validate_count()/walk_forward_validate_logistic()
+src/analysis/multiple_comparisons.py  # Benjamini-Hochberg FDR correction + lag-selection ambiguity detection across a scan_drivers() family; summarize_scan()
+src/dashboard/app.py       # Streamlit; reads Parquet, no API keys — uses correlate + regression + multiple_comparisons
 src/ingestion/make_samples.py  # synthetic data with planted signals for offline/CI
 src/ingestion/events_archive.py  # folds daily events snapshots into events_archive.parquet
 src/ingestion/timeseries_archive.py  # merges each self-archiving signal's fetch into its parquet in place
+src/ingestion/sample_window.py  # shift_sample_to_window() — shared helper that re-dates a bundled sample's timestamps into the requested window (weather/wastewater/hospital/mbta fallbacks)
 ```
 
 ### Signals (drivers + the dependent variable)
@@ -55,6 +57,7 @@ src/ingestion/timeseries_archive.py  # merges each self-archiving signal's fetch
 | Signal | Fetcher | Shape (cols beyond `timestamp`) |
 |--------|---------|----------------------------------|
 | transit | `mbta.py` | `route`, `value` |
+| transit_service_level | `mbta.py` | `route`, `value` (live-vehicle stock, kept separate from `transit`'s flow — see below) |
 | bikeshare | `bluebikes.py` | `value` |
 | weather | `weather.py` | one column per variable (wide) |
 | events | `events.py` + `ticketmaster.py` + `civic_events.py` | `venue`, `name`, `expected_attendance`, `source` |
@@ -67,10 +70,11 @@ src/ingestion/timeseries_archive.py  # merges each self-archiving signal's fetch
 deduplicated by date + event name) — see `src/ingestion/events_archive.py` and
 README's "Known limitations" for why this exists.
 
-`transit`, `weather`, `bikeshare`, `academic_calendar`, `wastewater`, and
-`hospital_demand` are all merged into their existing `data/<city>/*.parquet`
-in place by `run.py` (each fetch folded into the accumulated file, deduped on
-a per-signal key — `timestamp`[, `route`/`school`/`pathogen`/`metric`])
+`transit`, `transit_service_level`, `weather`, `bikeshare`, `academic_calendar`,
+`wastewater`, and `hospital_demand` are all merged into their existing
+`data/<city>/*.parquet` in place by `run.py` (each fetch folded into the
+accumulated file, deduped on a per-signal key — `timestamp`[, `route`/`school`/
+`pathogen`/`metric`])
 instead of overwriting it — see `src/ingestion/timeseries_archive.py` and
 `run.py`'s `TIMESERIES_KEY_COLUMNS`. This removes the ~1-year rolling cap and
 is the prerequisite for a real historical backfill (MBTA gated entries to
@@ -91,15 +95,29 @@ uncovered. The same "newer fetch wins" dedup tie-break also lets `wastewater`
 absorb legitimate upstream revisions to already-published dates instead of
 being stuck with a stale value forever.
 
+`transit_service_level` is a useful edge case of this rule: it *does*
+accumulate in `TIMESERIES_KEY_COLUMNS` like any other self-archiving signal,
+but it must never be merged into `transit`'s own history — the two measure
+different things (vehicles-in-service, a stock, vs. fare-gate taps, a flow),
+and `align()` sums every row sharing a timestamp regardless of route, so
+splicing a stock measure into a flow measure's column would corrupt the
+composite even though their route-label vocabularies never literally
+collide. See `mbta.py::fetch_transit_service_level`'s docstring for the full
+reasoning — this is the general principle to apply to any future signal that
+looks superficially similar to an existing one: accumulate flow-vs-stock (or
+otherwise semantically distinct) measures as genuinely separate signals, not
+as a fallback tier within an existing one.
+
 `hospital_demand` is the **dependent variable**; everything else is a driver. It
 currently represents respiratory-illness ED demand specifically, not all-cause
 hospital demand.
 
 See README's "Known limitations" for the current honest list of gaps (MWRA
-wastewater fallback is unexercised, transit/weather only have ~1 year of real
-history, events have zero overlap with historical hospital demand, second
-city untested). Worth fixing opportunistically, but don't let them block
-unrelated work.
+wastewater fallback is unexercised, `transit`'s gated-entry source still has
+a genuine 1-2 month publication lag that `transit_service_level` only
+partially answers, events have zero overlap with historical hospital demand
+yet, second city untested). Worth fixing opportunistically, but don't let
+them block unrelated work.
 
 ## Conventions to follow
 
@@ -127,12 +145,34 @@ unrelated work.
 - **Deseasonalize via `correlate.seasonal_residual()`**, not ad hoc rolling
   means — it's the single shared definition of "elevated for the time of
   year" used by both `lagged_cross_correlation` and
-  `regression.build_surge_labels`.
+  `regression.build_surge_labels`. Pass `causal=True` for any use that scores
+  or predicts future weeks (walk-forward validation, anything that must not
+  see data beyond "now") — it restricts the rolling seasonal mean to
+  trailing-only data instead of a centered window, so no future information
+  leaks into a supposedly out-of-sample score. Leave it `False` (the default)
+  for descriptive/exploratory analysis over a fixed historical window, where
+  a centered window is the more accurate seasonal estimate.
 - **Count regressions default to `family="poisson"` but prefer
   `"negative_binomial"` for real data.** On real weekly ED-visit counts,
   Poisson p-values are wildly overconfident (overdispersion); NB is the
   better-specified model even though it needs more data to fit cleanly. See
   README's "What we've found so far" for a worked example.
+- **Testing multiple drivers or multiple lags at once needs correction, not
+  just the raw p-value.** `src/analysis/multiple_comparisons.py`'s
+  `summarize_scan()` applies Benjamini-Hochberg FDR correction across a
+  `scan_drivers()` family and flags a driver's best lag as ambiguous when its
+  confidence interval overlaps the runner-up lag's — use it instead of
+  reading `lagged_cross_correlation`'s raw p-value in isolation whenever more
+  than one driver or more than one lag is being compared.
+- **Recurring items that need a human to act (not a code fix) get a
+  `[blocked-human]`-labeled GitHub issue, opened by a scheduled workflow that
+  checks for an existing open one first** rather than relying on someone to
+  remember. Two examples of this pattern today: the CHIA data-request issue
+  (externally blocked) and `.github/workflows/academic-calendar-reminder.yml`
+  (an annual internal reminder — `data/boston_academic_calendar.csv` has no
+  API behind it and silently drifted 68 days stale before that workflow
+  existed). Follow this pattern for any future "someone needs to periodically
+  do a manual thing" gap rather than adding a comment nobody will see again.
 
 ## Data provenance
 
@@ -148,6 +188,14 @@ visits + admissions for "broad acute respiratory" diagnoses, 2019–present) is
 also hand-maintained — regenerate it from a freshly downloaded MA DPH
 "Respiratory Disease Reporting" workbook with `scripts/build_ma_dph_csv.py`
 (see README). It's checked in like the other curated CSVs, not gitignored.
+
+Sample-tier fallbacks for live-API fetchers (weather, wastewater, hospital,
+mbta) share one helper, `sample_window.shift_sample_to_window()`, instead of
+each fetcher hand-rolling its own date-shifting logic — it re-dates a bundled
+sample's timestamps to line up with whatever window was actually requested,
+so a stale bundled sample still looks plausible regardless of when the
+pipeline runs. Use it for any new fetcher's sample fallback rather than
+writing a new one.
 
 ## Environment caveat (important)
 
