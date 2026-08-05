@@ -24,7 +24,9 @@ For each school, confirm the file has rows through at least the *next* two terms
 
 ## Status as of the 2026-08 refresh (for context on what's already covered)
 
-All 8 schools have Fall 2026 (`estimate`, derived via web research — not independently cross-checked against each registrar page directly, so treat as a candidate to upgrade to `verified-*` if you confirm it directly). Spring 2027 is only filled in for Northeastern, Harvard, Boston College, and MIT — **Boston University, UMass Boston, Tufts, and Suffolk still need Spring 2027** (research hit real gaps finding their exact first-day-of-classes dates).
+All 8 schools have Fall 2026. Spring 2027 is filled in for Northeastern, Harvard, Boston College, MIT, and UMass Boston — **Boston University, Tufts, and Suffolk still need Spring 2027** (research hit real gaps finding their exact first-day-of-classes dates).
+
+Most rows are `estimate` (derived via web research, not independently cross-checked against each registrar page directly) — **UMass Boston is `verified-2026-08`**, after someone pasted the actual registrar page content directly, which is also how two real errors got caught: the initial research-only pass had Boston University's Fall 2026 end date wrong by 3 days (used a grades-finalization date instead of the actual exam-period end) and MIT's Spring 2027 end date wrong by over a week (used what was very likely last-day-of-classes, not exam-period end). **If you're re-verifying an `estimate` row, the end_date is where the risk actually is** — "last day of classes" vs. "last day of exams" vs. "grades due" are three different dates schools all publish, and it's easy to grab the wrong one without directly viewing the source table. Start dates ("first day of classes") didn't show this problem.
 
 ## Possible automation lead — not yet built, don't assume it works
 
