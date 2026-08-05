@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 import pytest
 
+from src.analysis import correlate
 from src.analysis.correlate import align, driver_correlation_matrix, lagged_cross_correlation
 
 
@@ -69,6 +72,94 @@ def test_lagged_cross_correlation_detects_planted_lag():
     )
     assert result.best_lag == 2
     assert result.best_corr > 0.99
+    assert result.best_pvalue < 0.001
+    assert result.ci_low[result.best_lag] > 0
+    assert result.ambiguous is False
+
+
+def test_lagged_cross_correlation_reports_pvalue_and_ci_shapes():
+    rng = np.random.default_rng(1)
+    n = 40
+    t = pd.date_range("2024-01-07", periods=n, freq="W", tz="UTC")
+    s = pd.Series(rng.standard_normal(n), index=t)
+    result = lagged_cross_correlation(s, s, max_lag=5, deseasonalize=False)
+    for field in (result.pvalues, result.ci_low, result.ci_high, result.n_obs):
+        assert len(field) == len(result.lags)
+
+
+def test_lagged_cross_correlation_ci_excludes_zero_for_strong_imperfect_signal():
+    """A strong but non-exact correlation (unlike an exact-copy shift, which
+    hits the r=1 singularity) should give a well-defined CI that excludes zero."""
+    rng = np.random.default_rng(42)
+    n = 200
+    t = pd.date_range("2024-01-07", periods=n, freq="W", tz="UTC")
+    base = pd.Series(rng.standard_normal(n), index=t)
+    noise = pd.Series(rng.normal(scale=0.1, size=n), index=t)
+    response = (base.shift(2) + noise).dropna()
+    result = lagged_cross_correlation(
+        base.loc[response.index], response, max_lag=6, deseasonalize=False
+    )
+    assert result.best_lag == 2
+    assert 0 < result.best_corr < 1
+    assert result.ci_low[result.best_lag] > 0
+    assert result.ambiguous is False
+
+
+def test_lagged_cross_correlation_flags_ambiguous_for_pure_noise():
+    """With no real relationship, the 'best' lag by |corr| is just noise —
+    it must not be reported as clearly distinguishable from its runner-up,
+    even when its own p-value looks nominally significant on its own."""
+    rng = np.random.default_rng(3)
+    n = 60
+    t = pd.date_range("2024-01-07", periods=n, freq="W", tz="UTC")
+    driver = pd.Series(rng.standard_normal(n), index=t)
+    response = pd.Series(rng.standard_normal(n), index=t)
+    result = lagged_cross_correlation(driver, response, max_lag=6, deseasonalize=False)
+    assert result.ambiguous is True
+
+
+def test_fisher_ci_narrows_with_more_data():
+    lo_small, hi_small = correlate._fisher_ci(0.5, n=10)
+    lo_large, hi_large = correlate._fisher_ci(0.5, n=200)
+    assert (hi_small - lo_small) > (hi_large - lo_large)
+
+
+def test_fisher_ci_undefined_for_tiny_n():
+    lo, hi = correlate._fisher_ci(0.5, n=3)
+    assert math.isnan(lo) and math.isnan(hi)
+
+
+def test_fisher_ci_clamps_near_perfect_r_instead_of_nan():
+    """r=1 is a genuine transform singularity, but clamping just inside the
+    domain keeps a perfect/near-perfect correlation's CI well-defined (tight,
+    not NaN) — NaN here would wrongly read as "no significance info available"
+    for what is actually the most significant possible result."""
+    lo, hi = correlate._fisher_ci(1.0, n=50)
+    assert not math.isnan(lo) and not math.isnan(hi)
+    assert lo > 0.9
+    assert hi <= 1.0
+
+
+def test_is_ambiguous_true_for_overlapping_cis():
+    assert correlate._is_ambiguous(
+        ci_low=[0.1, 0.05], ci_high=[0.5, 0.45], order=[0, 1]
+    ) is True
+
+
+def test_is_ambiguous_false_for_clearly_separated_cis():
+    assert correlate._is_ambiguous(
+        ci_low=[0.8, -0.1], ci_high=[0.95, 0.1], order=[0, 1]
+    ) is False
+
+
+def test_is_ambiguous_true_when_ci_undefined():
+    assert correlate._is_ambiguous(
+        ci_low=[float("nan"), 0.1], ci_high=[float("nan"), 0.3], order=[0, 1]
+    ) is True
+
+
+def test_is_ambiguous_false_for_single_lag():
+    assert correlate._is_ambiguous(ci_low=[0.1], ci_high=[0.5], order=[0]) is False
 
 
 def test_lagged_cross_correlation_insufficient_data():

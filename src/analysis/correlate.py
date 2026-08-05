@@ -20,10 +20,12 @@ anything stronger.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 
 def align(
@@ -113,9 +115,52 @@ class CrossCorrResult:
 
     lags: list[int]
     correlations: list[float]
+    pvalues: list[float]
+    ci_low: list[float]
+    ci_high: list[float]
+    n_obs: list[int]
     best_lag: int
     best_corr: float
+    best_pvalue: float
+    ambiguous: bool
     deseasonalized: bool
+
+
+def _fisher_ci(r: float, n: int, alpha: float = 0.05) -> tuple[float, float]:
+    """``1 - alpha`` confidence interval for a Pearson r via the Fisher z-transform.
+
+    Undefined (returns NaN, NaN) for n < 4, where the standard error isn't
+    meaningful — genuinely too little data to say anything. ``r`` is clamped
+    just inside (-1, 1) before the transform rather than also returning NaN at
+    |r| == 1: that's a technicality of the transform's domain, not a sign of
+    *more* uncertainty — an exact r=1 is the least ambiguous result possible,
+    and reporting "no CI available" there would read backwards.
+    """
+    if n < 4 or np.isnan(r):
+        return (float("nan"), float("nan"))
+    r = float(np.clip(r, -1 + 1e-10, 1 - 1e-10))
+    z = np.arctanh(r)
+    se = 1.0 / np.sqrt(n - 3)
+    z_crit = stats.norm.ppf(1 - alpha / 2)
+    return (float(np.tanh(z - z_crit * se)), float(np.tanh(z + z_crit * se)))
+
+
+def _is_ambiguous(ci_low: list[float], ci_high: list[float], order: list[int]) -> bool:
+    """True if the runner-up lag's CI overlaps the top-ranked lag's CI.
+
+    ``order`` ranks lag indices by |correlation|, best first. This flags when
+    the top pick by ``argmax(|corr|)`` isn't clearly distinguishable from its
+    closest competitor — the failure mode that flipped the wastewater headline
+    result on a near-tie (lag 0 at +0.44 vs. lag 4 at -0.45; see README).
+    """
+    if len(order) < 2:
+        return False
+    best_idx, runner_up_idx = order[0], order[1]
+    best_lo, best_hi = ci_low[best_idx], ci_high[best_idx]
+    run_lo, run_hi = ci_low[runner_up_idx], ci_high[runner_up_idx]
+    if any(np.isnan(v) for v in (best_lo, best_hi, run_lo, run_hi)):
+        return True
+    return best_lo <= run_hi and run_lo <= best_hi
 
 
 def lagged_cross_correlation(
@@ -123,6 +168,7 @@ def lagged_cross_correlation(
     response: pd.Series,
     max_lag: int = 8,
     deseasonalize: bool = True,
+    alpha: float = 0.05,
 ) -> CrossCorrResult:
     """Correlate ``driver`` against ``response`` at lags 0..``max_lag``.
 
@@ -134,6 +180,12 @@ def lagged_cross_correlation(
     removed first, which guards against the "everything trends together in
     winter" trap. This is on by default precisely because the naive version is
     so easy to misread.
+
+    Each lag also reports a p-value and a ``1 - alpha`` confidence interval
+    (Fisher z-transform), and ``ambiguous`` flags when the selected "best" lag
+    isn't clearly distinguishable from its closest competitor — a near-tie in
+    ``|correlation|`` is not a reliable basis for picking one lag as *the*
+    result on its own.
     """
     df = pd.concat({"driver": driver, "response": response}, axis=1).dropna()
     if len(df) < max_lag + 3:
@@ -147,18 +199,23 @@ def lagged_cross_correlation(
         r = seasonal_residual(r)
 
     lags = list(range(0, max_lag + 1))
-    corrs = []
+    corrs, pvalues, n_obs = [], [], []
     for lag in lags:
-        if lag == 0:
-            corrs.append(float(d.corr(r)))
-        else:
-            # Strip index before correlating: pandas .corr() aligns by index,
-            # so d.iloc[:-lag] and r.iloc[lag:] (different index ranges) would
-            # intersect and compare the same timestamps rather than the intended
-            # positional shift. Using .values avoids this.
-            corrs.append(float(
-                pd.Series(d.values[:-lag]).corr(pd.Series(r.values[lag:]))
-            ))
+        # Strip the index before correlating: pandas .corr() aligns by index,
+        # so d.iloc[:-lag] and r.iloc[lag:] (different index ranges) would
+        # intersect and compare the same timestamps rather than the intended
+        # positional shift. Using .values avoids this.
+        x = d.values if lag == 0 else d.values[:-lag]
+        y = r.values if lag == 0 else r.values[lag:]
+        with warnings.catch_warnings():
+            # scipy warns (and returns NaN, NaN) on constant input rather than
+            # raising — same degenerate case the old .corr()-based NaN handling
+            # below already accounted for.
+            warnings.simplefilter("ignore")
+            corr, pvalue = stats.pearsonr(x, y)
+        corrs.append(float(corr))
+        pvalues.append(float(pvalue))
+        n_obs.append(len(x))
 
     nan_lags = [lags[i] for i, c in enumerate(corrs) if np.isnan(c)]
     if nan_lags:
@@ -167,11 +224,24 @@ def lagged_cross_correlation(
             "boundary effect. Treating as 0 for best-lag selection."
         )
     corrs_clean = [c if not np.isnan(c) else 0.0 for c in corrs]
-    best_idx = int(np.argmax(np.abs(corrs_clean)))
+    pvalues_clean = [p if not np.isnan(p) else 1.0 for p in pvalues]
+    ci = [_fisher_ci(c, n, alpha) for c, n in zip(corrs_clean, n_obs)]
+    ci_low = [lo for lo, _ in ci]
+    ci_high = [hi for _, hi in ci]
+
+    order = sorted(range(len(corrs_clean)), key=lambda i: abs(corrs_clean[i]), reverse=True)
+    best_idx = order[0]
+
     return CrossCorrResult(
         lags=lags,
         correlations=corrs_clean,
+        pvalues=pvalues_clean,
+        ci_low=ci_low,
+        ci_high=ci_high,
+        n_obs=n_obs,
         best_lag=lags[best_idx],
         best_corr=corrs_clean[best_idx],
+        best_pvalue=pvalues_clean[best_idx],
+        ambiguous=_is_ambiguous(ci_low, ci_high, order),
         deseasonalized=deseasonalize,
     )

@@ -381,7 +381,13 @@ def _render_correlation_and_regression(
         st.warning(str(exc))
         return
 
-    corr_df = pd.DataFrame({"lag_weeks": result.lags, "correlation": result.correlations})
+    corr_df = pd.DataFrame({
+        "lag_weeks": result.lags,
+        "correlation": result.correlations,
+        "pvalue": result.pvalues,
+        "ci_low": result.ci_low,
+        "ci_high": result.ci_high,
+    })
     bars = alt.Chart(corr_df).mark_bar().encode(
         x=alt.X("lag_weeks:O", title="Lag (weeks)", axis=alt.Axis(labelAngle=0)),
         y=alt.Y("correlation:Q", title="Correlation", scale=alt.Scale(domain=[-1, 1])),
@@ -391,14 +397,29 @@ def _render_correlation_and_regression(
         tooltip=[
             alt.Tooltip("lag_weeks:O", title="Lag (weeks)"),
             alt.Tooltip("correlation:Q", title="Correlation", format="+.3f"),
+            alt.Tooltip("pvalue:Q", title="p-value", format=".4f"),
         ],
     ).properties(height=280)
-    st.altair_chart(bars, width="stretch")
+    # 95% CI (Fisher z-transform) per lag, so a near-tie between the top two
+    # lags is visible as overlapping error bars, not just a single "winner" bar.
+    error_bars = alt.Chart(corr_df).mark_rule(color="black", opacity=0.6).encode(
+        x="lag_weeks:O", y="ci_low:Q", y2="ci_high:Q",
+    )
+    st.altair_chart(bars + error_bars, width="stretch")
     st.metric(
         label=f"Strongest correlation ({driver} → respiratory ED demand)",
         value=f"{result.best_corr:+.2f}",
         delta=f"at lag {result.best_lag} weeks",
     )
+    st.caption(f"p={result.best_pvalue:.4f} at the selected lag.")
+    if result.ambiguous:
+        st.warning(
+            "⚠️ **This lag isn't a clear winner** — its confidence interval "
+            "overlaps the runner-up lag's, so picking this specific lag over "
+            "the next-best one isn't statistically justified by this data "
+            "alone. Treat the *existence* of a relationship as more reliable "
+            "than *which lag* it peaks at."
+        )
 
     st.markdown("#### Lagged regression: does this driver predict a surge?")
     st.caption(
