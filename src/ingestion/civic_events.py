@@ -9,6 +9,17 @@ festivals, community health fairs, public meetings.
 
 Like the Ticketmaster fetcher, this queries upcoming events (today →
 today+FORWARD_DAYS) because the API exposes future events only.
+
+As of Sep 2026, this endpoint started intermittently returning a reset
+connection or an empty 200 body (two different failure signatures across
+consecutive daily runs — see the project's ingestion-health sitrep) instead
+of its usual JSON, which fails soft to zero rows via the same path as a real
+outage. `requests`' default User-Agent (``python-requests/X.Y``) is a common
+trigger for exactly this kind of intermittent bot-protection block, so this
+sends a realistic browser UA instead. Unconfirmed whether that's the actual
+cause (this project's sandboxed dev environment can't reach boston.gov to
+verify directly), but it's the standard, low-risk first thing to try before
+assuming the endpoint itself is gone.
 """
 
 from __future__ import annotations
@@ -21,6 +32,17 @@ import requests
 REQUEST_TIMEOUT = 30
 PAGE_LIMIT = 50
 FORWARD_DAYS = 365
+
+# A default `requests` User-Agent (python-requests/X.Y) is a common trigger
+# for bot-protection/WAF blocks on public-sector sites. A realistic browser
+# UA is the standard, low-risk mitigation.
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/vnd.api+json",
+}
 
 # Drupal JSON:API date fields to try in order of likelihood.
 # Boston.gov uses Drupal's recurring-date field module.
@@ -65,6 +87,7 @@ def fetch_events(
                     "page[limit]": PAGE_LIMIT,
                     "page[offset]": offset,
                 },
+                headers=_HEADERS,
                 timeout=REQUEST_TIMEOUT,
             )
         except requests.RequestException as exc:

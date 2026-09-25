@@ -255,7 +255,7 @@ def test_civic_events_does_not_send_sort_param(monkeypatch):
 
     captured = {}
 
-    def fake_get(url, params=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         captured.update(params or {})
         return _FakeResp({"data": [], "links": {}})
 
@@ -266,6 +266,27 @@ def test_civic_events_does_not_send_sort_param(monkeypatch):
         timezone="America/New_York",
     )
     assert "sort" not in captured
+
+
+def test_civic_events_sends_realistic_user_agent(monkeypatch):
+    """The default `requests` UA (python-requests/X.Y) is a common trigger for
+    bot-protection blocks on public-sector sites -- send a browser-like one."""
+    from src.ingestion import civic_events
+
+    captured = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured.update(headers or {})
+        return _FakeResp({"data": [], "links": {}})
+
+    monkeypatch.setattr(civic_events.requests, "get", fake_get)
+    civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
+        timezone="America/New_York",
+    )
+    assert "python-requests" not in captured.get("User-Agent", "").lower()
+    assert captured.get("User-Agent")
 
 
 def test_civic_events_400_response_returns_empty(monkeypatch):
