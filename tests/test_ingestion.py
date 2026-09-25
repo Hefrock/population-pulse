@@ -174,10 +174,12 @@ def test_ticketmaster_no_key_returns_empty(monkeypatch):
 
 
 def test_civic_events_network_error_returns_empty(monkeypatch):
-    """A network error from Boston.gov returns empty, not an exception."""
+    """A network error from Boston.gov returns empty, not an exception,
+    after exhausting retries."""
     import requests as req
     from src.ingestion import civic_events
 
+    monkeypatch.setattr(civic_events.time, "sleep", lambda s: None)
     monkeypatch.setattr(
         civic_events.requests, "get",
         lambda *a, **k: (_ for _ in ()).throw(req.ConnectionError("no route to host")),
@@ -290,7 +292,8 @@ def test_civic_events_sends_realistic_user_agent(monkeypatch):
 
 
 def test_civic_events_400_response_returns_empty(monkeypatch):
-    """A 400 from Drupal JSON:API (e.g. an unsortable field) fails soft."""
+    """A 400 from Drupal JSON:API (e.g. an unsortable field) fails soft,
+    after exhausting retries."""
     import requests as req
     from src.ingestion import civic_events
 
@@ -298,6 +301,7 @@ def test_civic_events_400_response_returns_empty(monkeypatch):
         def raise_for_status(self):
             raise req.HTTPError("400 Client Error: Bad Request")
 
+    monkeypatch.setattr(civic_events.time, "sleep", lambda s: None)
     monkeypatch.setattr(
         civic_events.requests, "get",
         lambda *a, **k: _BadResp({"data": [], "links": {}}),
@@ -309,6 +313,62 @@ def test_civic_events_400_response_returns_empty(monkeypatch):
     )
     assert df.empty
     assert list(df.columns) == ["timestamp", "venue", "name", "expected_attendance", "source"]
+
+
+def test_civic_events_retries_transient_failures_then_succeeds(monkeypatch):
+    """A connection reset on the first attempt(s) shouldn't sink the whole
+    fetch if a later retry succeeds -- this is the whole point of retrying
+    the "Response ended prematurely" failures seen in production."""
+    import requests as req
+    from src.ingestion import civic_events
+
+    future = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(days=30)).isoformat()
+    good_payload = {
+        "data": [{
+            "type": "node--event",
+            "attributes": {"title": "Boston Marathon", "field_event_date_recur": [{"value": future}]},
+        }],
+        "links": {},
+    }
+    calls = {"n": 0}
+
+    def flaky_get(*a, **k):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise req.ConnectionError("connection reset")
+        return _FakeResp(good_payload)
+
+    monkeypatch.setattr(civic_events.time, "sleep", lambda s: None)
+    monkeypatch.setattr(civic_events.requests, "get", flaky_get)
+    df = civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
+        timezone="America/New_York",
+    )
+    assert calls["n"] == 3
+    assert not df.empty
+    assert df["name"].iloc[0] == "Boston Marathon"
+
+
+def test_civic_events_does_not_retry_403(monkeypatch):
+    """A 401/403/404 is a deliberate rejection, not a transient failure --
+    retrying it would just waste time on every scheduled run."""
+    from src.ingestion import civic_events
+
+    calls = {"n": 0}
+
+    def fake_get(*a, **k):
+        calls["n"] += 1
+        return _FakeResp({}, status_code=403)
+
+    monkeypatch.setattr(civic_events.requests, "get", fake_get)
+    df = civic_events.fetch_events(
+        base_url="https://www.boston.gov",
+        start="2025-01-01", end="2025-12-31",
+        timezone="America/New_York",
+    )
+    assert df.empty
+    assert calls["n"] == 1
 
 
 def test_ticketmaster_uses_classificationname(monkeypatch):
