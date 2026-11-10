@@ -94,11 +94,13 @@ These are analyzed separately because they'd confound each other in a single cor
 | Hospital demand (respiratory-illness only) | MA DPH Respiratory Dashboard ("Visits by week") | Weekly ED visits + admissions, 2019–present | Manual download |
 | Hospital demand (fallback) | CDC FluView via Delphi Epidata | Weekly ILI counts | None |
 
-**On hospital data:** `data/ma_dph_respiratory.csv` (statewide weekly ED visits and admissions for "broad acute respiratory" diagnoses, 2019–present, 722 rows) is checked in and is the pipeline's Tier 1 — CDC FluView's ILI proxy is now only a fallback. To refresh it, download the current "Respiratory Disease Reporting" workbook from [mass.gov/info-details/weekly-flu-report](https://www.mass.gov/info-details/weekly-flu-report) (its "Visits by week" sheet covers all prior seasons) and run:
+**On hospital data:** `data/ma_dph_respiratory.csv` (statewide weekly ED visits and admissions for "broad acute respiratory" diagnoses, 2019–present, 766 rows) is checked in and is the pipeline's Tier 1 — CDC FluView's ILI proxy is now only a fallback. To refresh it, download the current "Respiratory Disease Reporting" workbook from [mass.gov/info-details/viral-respiratory-illness-reporting](https://www.mass.gov/info-details/viral-respiratory-illness-reporting) (its "Visits by week" sheet covers all prior seasons) and run:
 
 ```bash
 python scripts/build_ma_dph_csv.py path/to/RespiratoryDiseaseReporting*.xlsx
 ```
+
+MA DPH has moved this page before (it used to live at `mass.gov/info-details/weekly-flu-report`) without changing the workbook's sheet name or columns — `build_ma_dph_csv.py` needed no code changes the last time this happened, only a fresh download from wherever the page has moved to. If the link above goes dead, search mass.gov for "respiratory illness reporting" rather than assuming the data source itself is gone.
 
 **On the academic calendar:** there is no API for university term dates, so `data/boston_academic_calendar.csv` is a hand-curated reference (the same "manual baseline" pattern as the events CSV). Term dates are validated against each school's registrar and carry a `source` column (`verified-*`, `estimate`, or `prior-year-pattern`); refresh it ~10 minutes once a year when schools publish their next calendar. `.github/workflows/academic-calendar-reminder.yml` opens a `[blocked-human]`-labeled GitHub issue every July so this refresh doesn't get forgotten between years — see `.github/academic-calendar-reminder-body.md` for the per-school checklist.
 
